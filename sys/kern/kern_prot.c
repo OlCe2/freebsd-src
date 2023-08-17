@@ -1431,7 +1431,7 @@ cr_canseeothergids(struct ucred *u1, struct ucred *u2)
  * XXX: data declarations should be together near the beginning of the file.
  */
 
-static int	see_jail_proc = 1;
+static int	see_jail_proc = 0;
 SYSCTL_INT(_security_bsd, OID_AUTO, see_jail_proc, CTLFLAG_RW,
     &see_jail_proc, 0,
     "Unprivileged processes may see subjects/objects with different jail ids");
