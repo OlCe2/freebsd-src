@@ -628,6 +628,21 @@ tdq_setlowpri(struct tdq *tdq)
 		tdq->tdq_lowpri = td->td_priority;
 }
 
+/*
+ * Helper function to account for a thread's priority change in its runqueue.
+ *
+ * Avoids calling tdq_setlowpri() if it's not strictly necessary.
+ */
+static void
+tdq_thrprichange(struct tdq *tdq, u_char oldprio, u_char newprio)
+{
+
+	if (newprio < tdq->tdq_lowpri)
+		tdq->tdq_lowpri = newprio;
+	else if (oldprio == tdq->tdq_lowpri && newprio != oldprio)
+		tdq_setlowpri(tdq);
+}
+
 #ifdef SMP
 /*
  * We need some randomness. Implement a classic Linear Congruential
@@ -1885,10 +1900,7 @@ sched_thread_priority(struct thread *td, u_char prio)
 		tdq = TDQ_CPU(td_get_sched(td)->ts_cpu);
 		oldpri = td->td_priority;
 		td->td_priority = prio;
-		if (prio < tdq->tdq_lowpri)
-			tdq->tdq_lowpri = prio;
-		else if (tdq->tdq_lowpri == oldpri)
-			tdq_setlowpri(tdq);
+		tdq_thrprichange(tdq, oldpri, prio);
 		return;
 	}
 	td->td_priority = prio;
@@ -2535,11 +2547,17 @@ sched_preempt(struct thread *td)
 void
 sched_userret_slowpath(struct thread *td)
 {
+	u_char prio, usrprio;
 
 	thread_lock(td);
-	td->td_priority = td->td_user_pri;
-	td->td_base_pri = td->td_user_pri;
-	tdq_setlowpri(TDQ_SELF());
+
+	prio = td->td_priority;
+	usrprio = td->td_user_pri;
+
+	td->td_base_pri = usrprio;
+	td->td_priority = usrprio;
+	tdq_thrprichange(TDQ_SELF(), prio, usrprio);
+
 	thread_unlock(td);
 }
 
