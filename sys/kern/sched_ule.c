@@ -611,17 +611,16 @@ tdq_slice(struct tdq *tdq)
 }
 
 /*
- * Set lowpri to its exact value by searching the run-queue and
- * evaluating curthread.  curthread may be passed as an optimization.
+ * Set tdq's lowpri to its exact value by searching tdq's run-queue and
+ * considering the thread currently running on the corresponding CPU.
  */
 static void
-tdq_setlowpri(struct tdq *tdq, struct thread *ctd)
+tdq_setlowpri(struct tdq *tdq)
 {
-	struct thread *td;
+	struct thread *ctd, *td;
 
 	TDQ_LOCK_ASSERT(tdq, MA_OWNED);
-	if (ctd == NULL)
-		ctd = tdq->tdq_curthread;
+	ctd = tdq->tdq_curthread;
 	td = tdq_choose(tdq);
 	if (td == NULL || td->td_priority > ctd->td_priority)
 		tdq->tdq_lowpri = ctd->td_priority;
@@ -1889,7 +1888,7 @@ sched_thread_priority(struct thread *td, u_char prio)
 		if (prio < tdq->tdq_lowpri)
 			tdq->tdq_lowpri = prio;
 		else if (tdq->tdq_lowpri == oldpri)
-			tdq_setlowpri(tdq, td);
+			tdq_setlowpri(tdq);
 		return;
 	}
 	td->td_priority = prio;
@@ -2540,7 +2539,7 @@ sched_userret_slowpath(struct thread *td)
 	thread_lock(td);
 	td->td_priority = td->td_user_pri;
 	td->td_base_pri = td->td_user_pri;
-	tdq_setlowpri(TDQ_SELF(), td);
+	tdq_setlowpri(TDQ_SELF());
 	thread_unlock(td);
 }
 
@@ -2830,7 +2829,7 @@ sched_rem(struct thread *td)
 	tdq_load_rem(tdq, td);
 	TD_SET_CAN_RUN(td);
 	if (td->td_priority == tdq->tdq_lowpri)
-		tdq_setlowpri(tdq, NULL);
+		tdq_setlowpri(tdq);
 }
 
 /*
