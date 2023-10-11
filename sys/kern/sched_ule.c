@@ -229,7 +229,6 @@ static int __read_mostly sched_idlespinthresh = -1;
  *
  * Locking protocols:
  * (c)  constant after initialization
- * (f)  flag, set with the tdq lock held, cleared on local CPU
  * (l)  all accesses are CPU-local
  * (ls) stores are performed by the local CPU, loads may be lockless
  * (t)  all accesses are protected by the tdq mutex
@@ -251,7 +250,7 @@ struct tdq {
 	short		tdq_switchcnt;	/* (l) Switches this tick. */
 	short		tdq_oldswitchcnt; /* (l) Switches last tick. */
 	u_char		tdq_lowpri;	/* (ts) Lowest priority thread. */
-	u_char		tdq_owepreempt;	/* (f) Remote preemption pending. */
+	u_char		tdq_owepreempt;	/* (t) Remote preemption pending. */
 	u_char		tdq_idx;	/* (t) Current insert index. */
 	u_char		tdq_ridx;	/* (t) Current removal index. */
 	int		tdq_id;		/* (c) cpuid. */
@@ -2218,7 +2217,6 @@ sched_switch(struct thread *td, int flags)
 	td->td_flags &= ~(TDF_PICKCPU | TDF_SLICEEND);
 	ast_unsched_locked(td, TDA_SCHED);
 	td->td_owepreempt = 0;
-	atomic_store_char(&tdq->tdq_owepreempt, 0);
 	if (!TD_IS_IDLETHREAD(td))
 		TDQ_SWITCHCNT_INC(tdq);
 
@@ -2273,6 +2271,7 @@ sched_switch(struct thread *td, int flags)
 	 */
 	TDQ_LOCK_ASSERT(tdq, MA_OWNED | MA_NOTRECURSED);
 	MPASS(td == tdq->tdq_curthread);
+	tdq->tdq_owepreempt = 0;
 	newtd = choosethread();
 	sched_pctcpu_update(td_get_sched(newtd), 0);
 	TDQ_UNLOCK(tdq);
