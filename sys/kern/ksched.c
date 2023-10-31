@@ -77,18 +77,16 @@ ksched_detach(struct ksched *ks)
 }
 
 /*
- * XXX About priorities
- *
- *	POSIX 1003.1b requires that numerically higher priorities be of
- *	higher priority.  It also permits sched_setparam to be
- *	implementation defined for SCHED_OTHER.  I don't like
- *	the notion of inverted priorites for normal processes when
- *      you can use "setpriority" for that.
- *
+ * POSIX 1003.1b (Realtime Extensions) requires that numerically higher
+ * priorities be of higher priority.  It also permits sched_setparam() to be
+ * implementation defined for SCHED_OTHER.
  */
 
-/* Macros to convert between the unix (lower numerically is higher priority)
- * and POSIX 1003.1b (higher numerically is higher priority)
+/*
+ * Macros to convert between Realtime Priorities (as for rtprio(2), see
+ * 'sys/sys/rtprio.h'), for which lower numerical values mean higher priorities,
+ * and POSIX 1003.1b priorities, for which lower numerical values mean lower
+ * priorities.
  */
 
 #define p4prio_to_rtpprio(P) (RTP_PRIO_MAX - (P))
@@ -97,8 +95,6 @@ ksched_detach(struct ksched *ks)
 #define p4prio_to_tsprio(P) ((PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE) - (P))
 #define tsprio_to_p4prio(P) ((PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE) - (P))
 
-/* These improve readability a bit for me:
- */
 #define P1B_PRIO_MIN rtpprio_to_p4prio(RTP_PRIO_MAX)
 #define P1B_PRIO_MAX rtpprio_to_p4prio(RTP_PRIO_MIN)
 
@@ -146,11 +142,11 @@ ksched_getparam(struct ksched *ksched, struct thread *td,
 	if (RTP_PRIO_IS_REALTIME(rtp.type))
 		param->sched_priority = rtpprio_to_p4prio(rtp.prio);
 	else {
-		if (PRI_MIN_TIMESHARE < rtp.prio) 
+		if (PRI_MIN_TIMESHARE < rtp.prio)
 			/*
 		 	 * The interactive score has it to min realtime
 			 * so we must show max (64 most likely).
-			 */ 
+			 */
 			param->sched_priority = PRI_MAX_TIMESHARE -
 			    PRI_MIN_TIMESHARE;
 		else
