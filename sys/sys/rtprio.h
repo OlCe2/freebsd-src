@@ -60,6 +60,27 @@
 #define RTP_PRIO_MIN		0	/* Highest priority */
 #define RTP_PRIO_MAX		31	/* Lowest priority */
 
+
+/*
+ * Macros to convert between Realtime Priorities (used for rtprio(2)), for which
+ * lower numerical values mean higher priorities, and POSIX 1003.1b priorities
+ * (used by POSIX Scheduling Priorities, see 'sys/kern/ksched.c' and
+ * 'lib/libthr/thread/thr_kern.c', and for userspace mutexes, see
+ * 'sys/kern/kern_umtx.c'), for which lower numerical values mean lower
+ * priorities.
+ *
+ * Callers MUST ensure that the priorities passed to these macros are valid.
+ */
+ */
+#define p4prio_to_rtpprio(P) (RTP_PRIO_MAX - (P))
+#define rtpprio_to_p4prio(P) (RTP_PRIO_MAX - (P))
+
+#define p4prio_to_tsprio(P) (PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE - (P))
+#define tsprio_to_p4prio(P) (PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE - (P))
+
+#define P1B_PRIO_MIN rtpprio_to_p4prio(RTP_PRIO_MAX)
+#define P1B_PRIO_MAX rtpprio_to_p4prio(RTP_PRIO_MIN)
+
 /*
  * rtprio() syscall functions
  */

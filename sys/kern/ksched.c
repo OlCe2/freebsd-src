@@ -82,22 +82,6 @@ ksched_detach(struct ksched *ks)
  * implementation defined for SCHED_OTHER.
  */
 
-/*
- * Macros to convert between Realtime Priorities (as for rtprio(2), see
- * 'sys/sys/rtprio.h'), for which lower numerical values mean higher priorities,
- * and POSIX 1003.1b priorities, for which lower numerical values mean lower
- * priorities.
- */
-
-#define p4prio_to_rtpprio(P) (RTP_PRIO_MAX - (P))
-#define rtpprio_to_p4prio(P) (RTP_PRIO_MAX - (P))
-
-#define p4prio_to_tsprio(P) ((PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE) - (P))
-#define tsprio_to_p4prio(P) ((PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE) - (P))
-
-#define P1B_PRIO_MIN rtpprio_to_p4prio(RTP_PRIO_MAX)
-#define P1B_PRIO_MAX rtpprio_to_p4prio(RTP_PRIO_MIN)
-
 static __inline int
 getscheduler(struct ksched *ksched, struct thread *td, int *policy)
 {
