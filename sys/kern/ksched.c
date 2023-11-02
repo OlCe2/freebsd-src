@@ -124,17 +124,19 @@ ksched_getparam(struct ksched *ksched, struct thread *td,
 
 	pri_to_rtp(td, &rtp);
 	if (RTP_PRIO_IS_REALTIME(rtp.type))
-		param->sched_priority = rtpprio_to_p4prio(rtp.prio);
+		param->sched_priority = rtprio_to_p1bprio(rtp.prio);
 	else {
 		if (PRI_MIN_TIMESHARE < rtp.prio)
 			/*
-		 	 * The interactive score has it to min realtime
-			 * so we must show max (64 most likely).
+			 * This is not really representable with timeshare
+			 * priorities (due to the "feature" that kernel threads
+			 * can be in PRI_TIMESHARE while having a priority
+			 * numerically below PRI_MIN_TIMESHARE), so just report
+			 * the maximum we can.
 			 */
-			param->sched_priority = PRI_MAX_TIMESHARE -
-			    PRI_MIN_TIMESHARE;
+			param->sched_priority = P1B_TS_PRIO_MAX;
 		else
-			param->sched_priority = tsprio_to_p4prio(rtp.prio);
+			param->sched_priority = tsprio_to_p1bprio(rtp.prio);
 	}
 	return (0);
 }
@@ -157,9 +159,8 @@ ksched_setscheduler(struct ksched *ksched, struct thread *td, int policy,
 	switch(policy) {
 	case SCHED_RR:
 	case SCHED_FIFO:
-		if (param->sched_priority >= P1B_PRIO_MIN &&
-		    param->sched_priority <= P1B_PRIO_MAX) {
-			rtp.prio = p4prio_to_rtpprio(param->sched_priority);
+		if (P1B_PRIO_IS_IN_RT_RANGE(param->sched_priority)) {
+			rtp.prio = p1bprio_to_rtprio(param->sched_priority);
 			rtp.type = (policy == SCHED_FIFO) ? RTP_PRIO_FIFO :
 			    RTP_PRIO_REALTIME;
 			rtp_to_pri(&rtp, td);
@@ -168,10 +169,9 @@ ksched_setscheduler(struct ksched *ksched, struct thread *td, int policy,
 		}
 		break;
 	case SCHED_OTHER:
-		if (param->sched_priority >= 0 && param->sched_priority <=
-		    (PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE)) {
+		if (P1B_PRIO_IS_IN_TS_RANGE(param->sched_priority)) {
 			rtp.type = RTP_PRIO_NORMAL;
-			rtp.prio = p4prio_to_tsprio(param->sched_priority);
+			rtp.prio = p1bprio_to_tsprio(param->sched_priority);
 			rtp_to_pri(&rtp, td);
 		} else {
 			e = EINVAL;
@@ -203,43 +203,39 @@ ksched_yield(struct ksched *ksched)
 int
 ksched_get_priority_max(struct ksched *ksched, int policy, int *prio)
 {
-	int e;
 
-	e = 0;
 	switch (policy)	{
 	case SCHED_FIFO:
 	case SCHED_RR:
-		*prio = P1B_PRIO_MAX;
+		*prio = P1B_RT_PRIO_MAX;
 		break;
 	case SCHED_OTHER:
-		*prio = PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE;
+		*prio = P1B_TS_PRIO_MAX;
 		break;
 	default:
-		e = EINVAL;
-		break;
+		return (EINVAL);
 	}
-	return (e);
+
+	return (0);
 }
 
 int
 ksched_get_priority_min(struct ksched *ksched, int policy, int *prio)
 {
-	int e;
 
-	e = 0;
 	switch (policy)	{
 	case SCHED_FIFO:
 	case SCHED_RR:
-		*prio = P1B_PRIO_MIN;
+		*prio = P1B_RT_PRIO_MIN;
 		break;
 	case SCHED_OTHER:
-		*prio = 0;
+		*prio = P1B_TS_PRIO_MIN;
 		break;
 	default:
-		e = EINVAL;
-		break;
+		return (EINVAL);
 	}
-	return (e);
+
+	return (0);
 }
 
 int

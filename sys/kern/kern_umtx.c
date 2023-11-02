@@ -2546,12 +2546,11 @@ do_lock_pp(struct thread *td, struct umutex *m, uint32_t flags,
 			error = EFAULT;
 			goto out;
 		}
-		ceiling = RTP_PRIO_MAX - ceiling;
-		if (ceiling > RTP_PRIO_MAX) {
+		if (!P1B_PRIO_IS_IN_RT_RANGE(ceiling)) {
 			error = EINVAL;
 			goto out;
 		}
-		new_pri = PRI_MIN_REALTIME + ceiling;
+		new_pri = PRI_MIN_REALTIME + p1bprio_to_rtprio(ceiling);
 
 		if (td->td_base_user_pri < new_pri) {
 			error = EINVAL;
@@ -2712,9 +2711,9 @@ do_unlock_pp(struct thread *td, struct umutex *m, uint32_t flags, bool rb)
 	if (rceiling == -1)
 		new_inherited_pri = PRI_MAX;
 	else {
-		rceiling = RTP_PRIO_MAX - rceiling;
-		if (rceiling > RTP_PRIO_MAX)
+		if (!P1B_PRIO_IS_IN_RT_RANGE(rceiling))
 			return (EINVAL);
+		rceiling = p1bprio_to_rtprio(rceiling);
 		new_inherited_pri = PRI_MIN_REALTIME + rceiling;
 	}
 
@@ -2778,7 +2777,7 @@ do_set_ceiling(struct thread *td, struct umutex *m, uint32_t ceiling,
 		return (EFAULT);
 	if ((flags & UMUTEX_PRIO_PROTECT) == 0)
 		return (EINVAL);
-	if (ceiling > RTP_PRIO_MAX)
+	if (!P1B_PRIO_IS_IN_RT_RANGE(ceiling))
 		return (EINVAL);
 	id = td->td_tid;
 	uq = td->td_umtxq;

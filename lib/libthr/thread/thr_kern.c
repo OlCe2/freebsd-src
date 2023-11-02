@@ -69,11 +69,11 @@ _rtp_to_schedparam(const struct rtprio *rtp, int *policy,
 	switch(rtp->type) {
 	case RTP_PRIO_REALTIME:
 		*policy = SCHED_RR;
-		param->sched_priority = RTP_PRIO_MAX - rtp->prio;
+		param->sched_priority = rtprio_to_p1bprio(rtp->prio);
 		break;
 	case RTP_PRIO_FIFO:
 		*policy = SCHED_FIFO;
-		param->sched_priority = RTP_PRIO_MAX - rtp->prio;
+		param->sched_priority = rtprio_to_p1bprio(rtp->prio);
 		break;
 	default:
 		*policy = SCHED_OTHER;
@@ -90,11 +90,11 @@ _schedparam_to_rtp(int policy, const struct sched_param *param,
 	switch(policy) {
 	case SCHED_RR:
 		rtp->type = RTP_PRIO_REALTIME;
-		rtp->prio = RTP_PRIO_MAX - param->sched_priority;
+		rtp->prio = p1bprio_to_rtprio(param->sched_priority);
 		break;
 	case SCHED_FIFO:
 		rtp->type = RTP_PRIO_FIFO;
-		rtp->prio = RTP_PRIO_MAX - param->sched_priority;
+		rtp->prio = p1bprio_to_rtprio(param->sched_priority);
 		break;
 	case SCHED_OTHER:
 	default:

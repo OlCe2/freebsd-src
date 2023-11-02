@@ -277,6 +277,33 @@ donice(struct thread *td, struct proc *p, int n)
 	return (0);
 }
 
+
+/*
+ * Realtime Priorities
+ */
+
+/*
+ * Checks that priority bounds are sane.
+ */
+#define _PRI_TRANSLATION_ASSERT(macro_from_p1b, macro_to_p1b, pri, p1b_pri) \
+	_Static_assert(macro_from_p1b(p1b_pri) == pri,			\
+	    __STRING(macro_from_p1b) "() must map bound "		\
+	    __STRING(p1b_pri) " to " __STRING(pri));			\
+	_Static_assert(macro_to_p1b(pri) == p1b_pri,			\
+	    __STRING(macro_to_p1b) "() must map bound "			\
+	    __STRING(pri) " to " __STRING(p1b_pri));			\
+
+_PRI_TRANSLATION_ASSERT(p1bprio_to_rtprio, rtprio_to_p1bprio,
+    RTP_PRIO_MIN, P1B_RT_PRIO_MAX);
+_PRI_TRANSLATION_ASSERT(p1bprio_to_rtprio, rtprio_to_p1bprio,
+    RTP_PRIO_MAX, P1B_RT_PRIO_MIN);
+_PRI_TRANSLATION_ASSERT(p1bprio_to_tsprio, tsprio_to_p1bprio,
+    RTP_TS_PRIO_MIN, P1B_TS_PRIO_MAX);
+_PRI_TRANSLATION_ASSERT(p1bprio_to_tsprio, tsprio_to_p1bprio,
+    RTP_TS_PRIO_MAX, P1B_TS_PRIO_MIN);
+
+#undef _PRI_TRANSLATION_ASSERT
+
 static int unprivileged_idprio;
 SYSCTL_INT(_security_bsd, OID_AUTO, unprivileged_idprio, CTLFLAG_RW,
     &unprivileged_idprio, 0,
