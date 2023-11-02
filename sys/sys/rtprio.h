@@ -37,7 +37,9 @@
 #include <sys/priority.h>
 
 /*
- * Process realtime-priority specifications to rtprio.
+ * Realtime (and other types) priority specifications.
+ *
+ * To use with rtprio(2) and rtprio_thread(2).
  */
 
 /* priority types.  Start at 1 to catch uninitialized fields. */
@@ -62,53 +64,77 @@
 
 
 /*
- * Macros to convert between Realtime Priorities (used for rtprio(2)), for which
- * lower numerical values mean higher priorities, and POSIX 1003.1b priorities
- * (used by POSIX Scheduling Priorities, see 'sys/kern/ksched.c' and
- * 'lib/libthr/thread/thr_kern.c', and for userspace mutexes, see
- * 'sys/kern/kern_umtx.c'), for which lower numerical values mean lower
- * priorities.
- *
- * Callers MUST ensure that the priorities passed to these macros are valid.
- */
- */
-#define p4prio_to_rtpprio(P) (RTP_PRIO_MAX - (P))
-#define rtpprio_to_p4prio(P) (RTP_PRIO_MAX - (P))
-
-#define p4prio_to_tsprio(P) (PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE - (P))
-#define tsprio_to_p4prio(P) (PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE - (P))
-
-#define P1B_PRIO_MIN rtpprio_to_p4prio(RTP_PRIO_MAX)
-#define P1B_PRIO_MAX rtpprio_to_p4prio(RTP_PRIO_MIN)
-
-/*
  * rtprio() syscall functions
  */
 #define RTP_LOOKUP		0
 #define RTP_SET			1
 
-#ifndef LOCORE
-/*
- * Scheduling class information.
- */
 struct rtprio {
-	u_short type;			/* scheduling class */
+	u_short type;		/* Scheduling type/class. */
 	u_short prio;
 };
 
+/*
+ * Conversions between Realtime Priorities (used for rtprio(2)), for which lower
+ * numerical values mean higher priorities, and POSIX.1b priorities (used by
+ * POSIX Scheduling Priorities, see 'sys/kern/ksched.c' and
+ * 'lib/libthr/thread/thr_kern.c', and for userspace mutexes, see
+ * 'sys/kern/kern_umtx.c'), for which lower numerical values mean lower
+ * priorities.
+ */
+
+/*
+ * The range [RTP_PRIO_MIN; RTP_PRIO_MAX] of POSIX Realtime Priorities (which
+ * applies both for the realtime and idle classes) is mapped into [0;
+ * RTP_PRIO_MAX - RTP_PRIO_MIN] but in the "opposite direction" to satisfy the
+ * ordering constraint mentioned in the previous paragraph (e.g., the bounds are
+ * reversed, so RTP_PRIO_MAX is mapped to 0 and RTP_PRIO_MIN to RTP_PRIO_MAX -
+ * RTP_PRIO_MIN).
+ */
+#define P1B_RT_PRIO_MIN		0
+#define P1B_RT_PRIO_MAX		(RTP_PRIO_MAX - RTP_PRIO_MIN)
+
+#define P1B_PRIO_IS_IN_RT_RANGE(prio) ({				\
+    __typeof__(prio) _pri = (prio);					\
+    P1B_RT_PRIO_MIN <= _pri && _pri <= P1B_RT_PRIO_MAX;			\
+})
+
+#define rtprio_to_p1bprio(P)	(RTP_PRIO_MAX - (P) + P1B_RT_PRIO_MIN)
+#define p1bprio_to_rtprio(P)	(P1B_RT_PRIO_MAX - (P) + RTP_PRIO_MIN)
+
+
 #ifdef _KERNEL
+
+/*
+ * The range [0; PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE] of the timesharing class
+ * is mapped into [0; PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE] for SCHED_OTHER but
+ * in the "opposite direction" to satisfy the above-mentioned ordering
+ * constraint (e.g., the bounds are reversed, so PRI_MAX_TIMESHARE is mapped to
+ * 0 and PRI_MIN_TIMESHARE to PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE).
+ */
+#define RTP_TS_PRIO_MIN		0
+#define RTP_TS_PRIO_MAX		(PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE)
+#define P1B_TS_PRIO_MIN		0
+#define P1B_TS_PRIO_MAX		(PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE)
+
+#define P1B_PRIO_IS_IN_TS_RANGE(prio) ({				\
+    __typeof__(prio) _pri = (prio);					\
+    P1B_TS_PRIO_MIN <= _pri && _pri <= P1B_TS_PRIO_MAX;			\
+})
+
+#define tsprio_to_p1bprio(P)	(RTP_TS_PRIO_MAX - (P) + P1B_TS_PRIO_MIN)
+#define p1bprio_to_tsprio(P)	(P1B_TS_PRIO_MAX - (P) + RTP_TS_PRIO_MIN)
+
 struct thread;
 int	rtp_to_pri(struct rtprio *, struct thread *);
 void	pri_to_rtp(struct thread *, struct rtprio *);
-#endif
-#endif
 
-#ifndef _KERNEL
-#include <sys/cdefs.h>
+#else /* !_KERNEL */
 
 __BEGIN_DECLS
 int	rtprio(int, pid_t, struct rtprio *);
 int	rtprio_thread(int, lwpid_t, struct rtprio *);
 __END_DECLS
-#endif	/* !_KERNEL */
-#endif	/* !_SYS_RTPRIO_H_ */
+
+#endif /* _KERNEL */
+#endif /* !_SYS_RTPRIO_H_ */
