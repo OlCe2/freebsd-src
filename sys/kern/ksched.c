@@ -46,6 +46,7 @@
 #include <sys/proc.h>
 #include <sys/posix4.h>
 #include <sys/resource.h>
+#include <sys/rtprio.h>
 #include <sys/sched.h>
 
 FEATURE(kposix_priority_scheduling, "POSIX P1003.1B realtime extensions");

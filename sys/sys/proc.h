@@ -52,7 +52,6 @@
 #include <sys/_mutex.h>
 #include <sys/osd.h>
 #include <sys/priority.h>
-#include <sys/rtprio.h>			/* XXX. */
 #include <sys/runq.h>
 #include <sys/resource.h>
 #include <sys/sigio.h>
@@ -187,6 +186,7 @@ struct p_sched;
 struct proc;
 struct procdesc;
 struct racct;
+struct rtprio;
 struct sbuf;
 struct sleepqueue;
 struct socket;

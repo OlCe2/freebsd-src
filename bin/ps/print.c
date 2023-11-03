@@ -32,6 +32,7 @@
 #include <sys/param.h>
 #include <sys/time.h>
 #include <sys/resource.h>
+#include <sys/rtprio.h>
 #include <sys/proc.h>
 #include <sys/stat.h>
 

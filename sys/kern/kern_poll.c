@@ -38,6 +38,7 @@
 #include <sys/epoch.h>
 #include <sys/eventhandler.h>
 #include <sys/resourcevar.h>
+#include <sys/rtprio.h>
 #include <sys/sched.h>
 #include <sys/socket.h>			/* needed by net/if.h		*/
 #include <sys/sockio.h>
