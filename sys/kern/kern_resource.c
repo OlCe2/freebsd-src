@@ -47,6 +47,7 @@
 #include <sys/refcount.h>
 #include <sys/racct.h>
 #include <sys/resourcevar.h>
+#include <sys/rtprio.h>
 #include <sys/rwlock.h>
 #include <sys/sched.h>
 #include <sys/sx.h>

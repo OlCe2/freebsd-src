@@ -48,6 +48,7 @@
 #include <sys/proc.h>
 #include <sys/resource.h>
 #include <sys/resourcevar.h>
+#include <sys/rtprio.h>
 #include <sys/rwlock.h>
 #include <sys/sbuf.h>
 #include <sys/sched.h>
