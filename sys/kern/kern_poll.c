@@ -38,7 +38,6 @@
 #include <sys/epoch.h>
 #include <sys/eventhandler.h>
 #include <sys/resourcevar.h>
-#include <sys/rtprio.h>
 #include <sys/sched.h>
 #include <sys/socket.h>			/* needed by net/if.h		*/
 #include <sys/sockio.h>
@@ -553,13 +552,11 @@ static void
 poll_idle(void)
 {
 	struct thread *td = curthread;
-	struct rtprio rtp;
 
-	rtp.prio = RTP_PRIO_MAX;	/* lowest priority */
-	rtp.type = RTP_PRIO_IDLE;
-	PROC_SLOCK(td->td_proc);
-	rtp_to_pri(&rtp, td);
-	PROC_SUNLOCK(td->td_proc);
+	thread_lock(td);
+	sched_class(td, PRI_IDLE);
+	sched_prio(td, PRI_MAX_IDLE); /* lowest priority */
+	thread_unlock(td);
 
 	for (;;) {
 		if (poll_in_idle_loop && poll_handlers > 0) {
