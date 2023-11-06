@@ -333,6 +333,54 @@ SYSCTL_INT(_security_bsd, OID_AUTO, unprivileged_idprio, CTLFLAG_RW,
     "Allow non-root users to set an idle priority (deprecated)");
 
 /*
+ * Indicates whether the passed thread has privilege to set the priority of any
+ * thread to the passed specification.  Returns 0 if it can, EPERM if it can't
+ * (or the type is invalid).
+ */
+int
+rtp_can_set_prio(struct thread *const td, const struct rtprio *const rtp)
+{
+
+	MPASS(td == curthread);
+
+	/*
+	 * Realtime priority has to be restricted for reasons which
+	 * should be obvious.  However, for idleprio processes, there is
+	 * a potential for system deadlock if an idleprio process gains
+	 * a lock on a resource that other processes need (and the
+	 * idleprio process can't run due to a CPU-bound normal
+	 * process).  Fix me!  XXX
+	 *
+	 * This problem is not only related to idleprio process.
+	 * A user level program can obtain a file lock and hold it
+	 * indefinitely.  Additionally, without idleprio processes it is
+	 * still conceivable that a program with low priority will never
+	 * get to run.  In short, allowing this feature might make it
+	 * easier to lock a resource indefinitely, but it is not the
+	 * only thing that makes it possible.
+	 */
+
+	switch (rtp->type) {
+	case RTP_PRIO_FIFO:
+	case RTP_PRIO_REALTIME:
+		if (priv_check(td, PRIV_SCHED_RTPRIO) == 0)
+			return (0);
+		break;
+
+	case RTP_PRIO_IDLE:
+		if (unprivileged_idprio == 1 ||
+		    priv_check(td, PRIV_SCHED_IDPRIO) == 0)
+			return (0);
+		break;
+
+	case RTP_PRIO_NORMAL:
+		return (0);
+	}
+
+	return (EPERM);
+}
+
+/*
  * Set realtime priority for LWP.
  */
 #ifndef _SYS_SYSPROTO_H_
@@ -381,27 +429,11 @@ sys_rtprio_thread(struct thread *td, struct rtprio_thread_args *uap)
 		/* Disallow setting rtprio in most cases if not superuser. */
 
 		/*
-		 * Realtime priority has to be restricted for reasons which
-		 * should be obvious.  However, for idleprio processes, there is
-		 * a potential for system deadlock if an idleprio process gains
-		 * a lock on a resource that other processes need (and the
-		 * idleprio process can't run due to a CPU-bound normal
-		 * process).  Fix me!  XXX
-		 *
-		 * This problem is not only related to idleprio process.
-		 * A user level program can obtain a file lock and hold it
-		 * indefinitely.  Additionally, without idleprio processes it is
-		 * still conceivable that a program with low priority will never
-		 * get to run.  In short, allowing this feature might make it
-		 * easier to lock a resource indefinitely, but it is not the
-		 * only thing that makes it possible.
+		 * Setting rtprio requires privilege.  See comments in
+		 * rtp_can_set_prio().
 		 */
-		if (RTP_PRIO_BASE(rtp.type) == RTP_PRIO_REALTIME &&
-		    (error = priv_check(td, PRIV_SCHED_RTPRIO)) != 0)
-			break;
-		if (RTP_PRIO_BASE(rtp.type) == RTP_PRIO_IDLE &&
-		    unprivileged_idprio == 0 &&
-		    (error = priv_check(td, PRIV_SCHED_IDPRIO)) != 0)
+		error = rtp_can_set_prio(td, &rtp);
+		if (error != 0)
 			break;
 		error = rtp_to_pri(&rtp, td1);
 		break;
@@ -482,16 +514,11 @@ sys_rtprio(struct thread *td, struct rtprio_args *uap)
 			break;
 
 		/*
-		 * Disallow setting rtprio in most cases if not superuser.
-		 * See the comment in sys_rtprio_thread about idprio
-		 * threads holding a lock.
+		 * Setting rtprio requires privilege.  See comments in
+		 * rtp_can_set_prio().
 		 */
-		if (RTP_PRIO_BASE(rtp.type) == RTP_PRIO_REALTIME &&
-		    (error = priv_check(td, PRIV_SCHED_RTPRIO)) != 0)
-			break;
-		if (RTP_PRIO_BASE(rtp.type) == RTP_PRIO_IDLE &&
-		    unprivileged_idprio == 0 &&
-		    (error = priv_check(td, PRIV_SCHED_IDPRIO)) != 0)
+		error = rtp_can_set_prio(td, &rtp);
+		if (error != 0)
 			break;
 
 		/*
