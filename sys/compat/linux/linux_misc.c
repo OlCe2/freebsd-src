@@ -2720,6 +2720,7 @@ linux_rtprio2ioprio(struct rtprio *rtp)
 		prio = rtp->prio / LINUX_PRIO_DIVIDER;
 		ioprio = LINUX_IOPRIO_PRIO(LINUX_IOPRIO_CLASS_BE, prio);
 		break;
+	case RTP_PRIO_FIFO:
 	case RTP_PRIO_REALTIME:
 		prio = rtp->prio / LINUX_PRIO_DIVIDER;
 		ioprio = LINUX_IOPRIO_PRIO(LINUX_IOPRIO_CLASS_RT, prio);
