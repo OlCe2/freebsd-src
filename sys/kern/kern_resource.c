@@ -624,6 +624,44 @@ sys_rtprio_thread(struct thread *td, struct rtprio_thread_args *uap)
 	return (error);
 }
 
+/*
+ * Check correspondance of RT priority types assumed by conversion functions.
+ */
+#define _PRI_CLASS_CONVERSION_ASSERT(rtp_type, p1b_class)		\
+	_Static_assert(rtp_type == p1b_class,				\
+	    "RTP type " __STRING(rtp_type) " (" __XSTRING(rtp_type) ") and " \
+	    "POSIX class " __STRING(p1b_class) " (" __XSTRING(p1b_class) ") " \
+	    "values don't match")
+
+_PRI_CLASS_CONVERSION_ASSERT(RTP_PRIO_ITHD, PRI_ITHD);
+_PRI_CLASS_CONVERSION_ASSERT(RTP_PRIO_FIFO, PRI_FIFO);
+_PRI_CLASS_CONVERSION_ASSERT(RTP_PRIO_REALTIME, PRI_REALTIME);
+_PRI_CLASS_CONVERSION_ASSERT(RTP_PRIO_NORMAL, PRI_TIMESHARE);
+_PRI_CLASS_CONVERSION_ASSERT(RTP_PRIO_IDLE, PRI_IDLE);
+
+#undef _PRI_CLASS_CONVERSION_ASSERT
+
+/*
+ * The next two conversion functions' implementations work because of the
+ * correspondance invariants checked just above.  They do not check for invalid
+ * classes.
+ */
+
+static inline u_short
+_rtp_from_pri_class(u_char pri_class)
+{
+
+	return (pri_class);
+}
+
+static inline u_char
+_rtp_to_pri_class(u_short rtp_class)
+{
+
+	return (rtp_class);
+}
+
+
 static void
 _rtp_set(const struct rtprio *rtp, struct thread *ttd)
 {
@@ -632,7 +670,8 @@ _rtp_set(const struct rtprio *rtp, struct thread *ttd)
 	KASSERT(rtp_is_valid(rtp) == 0,
 	    ("%s: Called with an invalid 'struct rtprio'.", __func__));
 
-	switch (RTP_PRIO_BASE(rtp->type)) {
+	switch (rtp->type) {
+	case RTP_PRIO_FIFO:
 	case RTP_PRIO_REALTIME:
 		newpri = PRI_MIN_REALTIME + rtp->prio;
 		break;
@@ -649,7 +688,7 @@ _rtp_set(const struct rtprio *rtp, struct thread *ttd)
 
 	thread_lock(ttd);
 	oldclass = ttd->td_pri_class;
-	sched_class(ttd, rtp->type);	/* XXX fix */
+	sched_class(ttd, _rtp_to_pri_class(rtp->type));
 	oldpri = ttd->td_user_pri;
 	sched_user_prio(ttd, newpri);
 	if (ttd->td_user_pri != oldpri && (oldclass != RTP_PRIO_NORMAL ||
@@ -757,7 +796,7 @@ _rtp_get(struct thread *ttd, struct rtprio *rtp)
 
 #undef _RTP_GET_IN_RANGE
 
-	rtp->type = pri_class;
+	rtp->type = _rtp_from_pri_class(pri_class);
 	MPASS(rtp_is_valid(rtp));
 	return (0);
 }

@@ -31,11 +31,17 @@
  * SUCH DAMAGE.
  */
 
+
+/*
+ * Realtime (and other types) priority specifications.
+ *
+ * To use with rtprio(2) and rtprio_thread(2).
+ */
+
 #ifndef _SYS_RTPRIO_H_
 #define _SYS_RTPRIO_H_
 
 #include <sys/_types.h>
-#include <sys/priority.h>
 
 #ifndef _LWPID_T_DECLARED
 typedef	__lwpid_t	lwpid_t;
@@ -48,26 +54,46 @@ typedef	__pid_t		pid_t;
 #endif
 
 /*
- * Realtime (and other types) priority specifications.
+ * Priority types/classes ("Scheduling Policies" in POSIX.1b parlance; see the
+ * latter in 'sys/sys/sched.h' and mapping in 'sys/kern/ksched.c').
  *
- * To use with rtprio(2) and rtprio_thread(2).
+ * 0 isn't defined to help catch uninitialized fields.  Defined priority types
+ * are ordered from highest to lowest priority (except that RTP_PRIO_FIFO and
+ * RTP_PRIO_REALTIME are mostly equivalent, see below).  By contrast, their
+ * numerical values are not since previously attributed ones are preserved for
+ * ABI compatibility.
+ *
+ * Priority type RTP_PRIO_ITHD below is observable (RTP_LOOKUP; with appropriate
+ * privileges) but not settable.
+ *
+ * Priority levels in RTP_PRIO_FIFO are the same as those of RTP_PRIO_REALTIME.
+ * The only difference is that a RTP_PRIO_FIFO thread that is running is never
+ * descheduled to run a thread with equivalent priority, whereas this happens
+ * for RTP_PRIO_REALTIME threads (at quantum exhaustion).
+ *
+ * The priority type RTP_PRIO_FIFO is equivalent to the POSIX.1b scheduling
+ * policy SCHED_FIFO, and RTP_PRIO_REALTIME to SCHED_RR, but their priority
+ * levels' numerical values differ (see conversion macros below).
+ *
+ * Bit 3 in the priority type was previously considered as the FIFO "bit", which
+ * has no meaning and effect unless used in conjunction with RTP_PRIO_REALTIME.
+ * Its corresponding macro (RTP_PRIO_FIFO_BIT) was removed.  For clarity, please
+ * only use the symbolic constants below and equality operators (or a straight
+ * 'switch' statement).
  */
 
-/* priority types.  Start at 1 to catch uninitialized fields. */
+/* Kernel processes with highest priority (interrupt threads). */
+#define RTP_PRIO_ITHD		1
+#define RTP_PRIO_FIFO		10	/* (RTP_PRIO_REALTIME | (1 << 3)) */
+#define RTP_PRIO_REALTIME	2	/* Realtime process. */
+#define RTP_PRIO_NORMAL		3	/* Time sharing process. */
+#define RTP_PRIO_IDLE		4	/* Idle process. */
 
-#define RTP_PRIO_ITHD		PRI_ITHD	/* Interrupt thread. */
-#define RTP_PRIO_REALTIME	PRI_REALTIME	/* real time process */
-#define RTP_PRIO_NORMAL		PRI_TIMESHARE	/* time sharing process */
-#define RTP_PRIO_IDLE		PRI_IDLE	/* idle process */
-
-/* RTP_PRIO_FIFO is POSIX.1B SCHED_FIFO.
+/*
+ * The obsolete function-like macros RTP_PRIO_BASE(), RTP_PRIO_IS_REALTIME() and
+ * RTP_PRIO_NEED_RR() were all removed.  Just use comparisons or a switch
+ * statement with the above-defined constants instead.
  */
-
-#define RTP_PRIO_FIFO_BIT	PRI_FIFO_BIT
-#define RTP_PRIO_FIFO		PRI_FIFO
-#define RTP_PRIO_BASE(P)	PRI_BASE(P)
-#define RTP_PRIO_IS_REALTIME(P) PRI_IS_REALTIME(P)
-#define RTP_PRIO_NEED_RR(P)	PRI_NEED_RR(P)
 
 /*
  * Priority range for the RTP_PRIO_FIFO, RTP_PRIO_REALTIME and RTP_PRIO_IDLE
