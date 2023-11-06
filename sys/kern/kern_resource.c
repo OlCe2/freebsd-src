@@ -346,7 +346,8 @@ _Static_assert(P1B_RT_PRIO_MAX - P1B_RT_PRIO_MIN + 1 >= 32,
 static int unprivileged_idprio;
 SYSCTL_INT(_security_bsd, OID_AUTO, unprivileged_idprio, CTLFLAG_RW,
     &unprivileged_idprio, 0,
-    "Allow non-root users to set an idle priority (deprecated)");
+    "Allow non-root users to set an idle priority "
+    "(deprecated, see mac_priority(4))");
 
 /*
  * Check whether a 'struct rtprio' is filled correctly.
