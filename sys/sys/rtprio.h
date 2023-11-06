@@ -126,6 +126,7 @@ struct rtprio {
 #define p1bprio_to_tsprio(P)	(P1B_TS_PRIO_MAX - (P) + RTP_TS_PRIO_MIN)
 
 struct thread;
+int	rtp_can_set_prio(struct thread *, const struct rtprio *);
 int	rtp_to_pri(struct rtprio *, struct thread *);
 void	pri_to_rtp(struct thread *, struct rtprio *);
 

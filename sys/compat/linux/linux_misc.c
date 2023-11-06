@@ -2882,9 +2882,9 @@ linux_ioprio_set(struct thread *td, struct linux_ioprio_set_args *args)
 
 	if ((error = linux_ioprio2rtprio(args->ioprio, &rtp)) != 0)
 		return (error);
-	/* Attempts to set high priorities (REALTIME) require su privileges. */
-	if (RTP_PRIO_BASE(rtp.type) == RTP_PRIO_REALTIME &&
-	    (error = priv_check(td, PRIV_SCHED_RTPRIO)) != 0)
+	/* Attempts to set non-timeshare priorities require privileges. */
+	error = rtp_can_set_prio(td, &rtp);
+	if (error != 0)
 		return (error);
 
 	p = NULL;
