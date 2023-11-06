@@ -49,7 +49,7 @@ typedef	__rlim_t	rlim_t;
 /*
  * Process priority specifications to get/setpriority.
  */
-#define	PRIO_MIN	-20
+#define	PRIO_MIN	(-20)
 #define	PRIO_MAX	20
 
 #define	PRIO_PROCESS	0
@@ -64,7 +64,7 @@ typedef	__rlim_t	rlim_t;
  */
 
 #define	RUSAGE_SELF	0
-#define	RUSAGE_CHILDREN	-1
+#define	RUSAGE_CHILDREN	(-1)
 #define	RUSAGE_THREAD	1
 
 struct rusage {
