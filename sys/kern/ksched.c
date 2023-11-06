@@ -133,7 +133,8 @@ ksched_getparam(struct ksched *ksched, struct thread *td,
 	if ((error = rtp_get_thread(curthread, td, &rtp)) != 0)
 		return (error);
 
-	switch (RTP_PRIO_BASE(rtp.type)) {
+	switch (rtp.type) {
+	case RTP_PRIO_FIFO:
 	case RTP_PRIO_REALTIME:
 		param->sched_priority = rtprio_to_p1bprio(rtp.prio);
 		break;
