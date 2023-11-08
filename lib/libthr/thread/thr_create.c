@@ -167,8 +167,10 @@ _pthread_create(pthread_t * __restrict thread,
 		param.rtp = NULL;
 	else {
 		sched_param.sched_priority = new_thread->attr.prio;
-		_schedparam_to_rtp(new_thread->attr.sched_policy,
+		ret = _schedparam_to_rtp(new_thread->attr.sched_policy,
 			&sched_param, &rtp);
+		if (ret != 0)
+			goto err_before_thread_created;
 		param.rtp = &rtp;
 	}
 
@@ -196,6 +198,7 @@ _pthread_create(pthread_t * __restrict thread,
 		__sys_sigprocmask(SIG_SETMASK, &oset, NULL);
 
 	if (ret != 0) {
+err_before_thread_created:
 		if (!locked)
 			THR_THREAD_LOCK(curthread, new_thread);
 		new_thread->state = PS_DEAD;

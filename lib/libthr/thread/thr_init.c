@@ -421,8 +421,9 @@ init_main_thread(struct pthread *thread)
 
 	thread->state = PS_RUNNING;
 
-	_thr_getscheduler(thread->tid, &thread->attr.sched_policy,
-		 &sched_param);
+	if (_thr_getscheduler(thread->tid, &thread->attr.sched_policy,
+	    &sched_param) != 0)
+		PANIC("Can't get valid userspace scheduling parameters");
 	thread->attr.prio = sched_param.sched_priority;
 
 #ifdef _PTHREAD_FORCED_UNWIND

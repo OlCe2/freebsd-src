@@ -51,13 +51,13 @@ _pthread_setschedparam(pthread_t pthread, int policy,
 	const struct sched_param *param)
 {
 	struct pthread	*curthread = _get_curthread();
-	int	ret;
+	int	error;
 
 	if (pthread == curthread)
 		THR_LOCK(curthread);
-	else if ((ret = _thr_find_thread(curthread, pthread,
+	else if ((error = _thr_find_thread(curthread, pthread,
 		 /*include dead*/0)) != 0)
-		return (ret);
+		return (error);
 	if (pthread->attr.sched_policy == policy &&
 	    (policy == SCHED_OTHER ||
 	     pthread->attr.prio == param->sched_priority)) {
@@ -65,13 +65,11 @@ _pthread_setschedparam(pthread_t pthread, int policy,
 		THR_THREAD_UNLOCK(curthread, pthread);
 		return (0);
 	}
-	ret = _thr_setscheduler(pthread->tid, policy, param);
-	if (ret == -1)
-		ret = errno;
-	else {
+	error = _thr_setscheduler(pthread->tid, policy, param);
+	if (error == 0) {
 		pthread->attr.sched_policy = policy;
 		pthread->attr.prio = param->sched_priority;
 	}
 	THR_THREAD_UNLOCK(curthread, pthread);
-	return (ret);
+	return (error);
 }
