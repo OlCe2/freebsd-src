@@ -661,6 +661,18 @@ _rtp_to_pri_class(u_short rtp_class)
 	return (rtp_class);
 }
 
+/*
+ * Check that realtime and idle ranges for internal and RT priorities have
+ * exactly the same size.  Code below assumes these properties.  So does that
+ * dealing with the PTHREAD_PRIO_PROTECT protocol of user-space mutexes (see
+ * 'kern_umtx.c').
+ */
+_Static_assert(PRI_MAX_REALTIME - PRI_MIN_REALTIME + 1 == RTP_PRIO_RANGE_SIZE,
+    "Code assumes one internal priority level per RTP_PRIO_REALTIME level.");
+_Static_assert(PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE + 1 == TS_PRIO_RANGE_SIZE,
+    "Code assumes one internal priority level per RTP_PRIO_NORMAL level.");
+_Static_assert(PRI_MAX_IDLE - PRI_MIN_IDLE + 1 == RTP_PRIO_RANGE_SIZE,
+    "Code assumes one internal priority level per RTP_PRIO_IDLE level.");
 
 static void
 _rtp_set(const struct rtprio *rtp, struct thread *ttd)
