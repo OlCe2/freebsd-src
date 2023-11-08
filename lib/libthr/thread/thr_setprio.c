@@ -42,25 +42,24 @@ _pthread_setprio(pthread_t pthread, int prio)
 {
 	struct pthread	*curthread = _get_curthread();
 	struct sched_param	param;
-	int	ret;
+	int	error;
 
 	param.sched_priority = prio;
 	if (pthread == curthread)
 		THR_LOCK(curthread);
-	else if ((ret = _thr_find_thread(curthread, pthread, /*include dead*/0)))
-		return (ret);
+	else if ((error = _thr_find_thread(curthread, pthread,
+	    /*include dead*/0)))
+		return (error);
 	if (pthread->attr.sched_policy == SCHED_OTHER ||
 	    pthread->attr.prio == prio) {
 		pthread->attr.prio = prio;
-		ret = 0;
+		error = 0;
 	} else {
-		ret = _thr_setscheduler(pthread->tid,
+		error = _thr_setscheduler(pthread->tid,
 			pthread->attr.sched_policy, &param);
-		if (ret == -1)
-			ret = errno;
-		else
+		if (error == 0)
 			pthread->attr.prio = prio;
 	}
 	THR_THREAD_UNLOCK(curthread, pthread);
-	return (ret);
+	return (error);
 }

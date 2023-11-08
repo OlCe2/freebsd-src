@@ -64,67 +64,73 @@ _thr_assert_lock_level(void)
 
 int
 _rtp_to_schedparam(const struct rtprio *rtp, int *policy,
-	struct sched_param *param)
+    struct sched_param *param)
 {
-	switch(rtp->type) {
-	case RTP_PRIO_REALTIME:
-		*policy = SCHED_RR;
-		param->sched_priority = rtprio_to_p1bprio(rtp->prio);
-		break;
+	switch (rtp->type) {
 	case RTP_PRIO_FIFO:
-		*policy = SCHED_FIFO;
-		param->sched_priority = rtprio_to_p1bprio(rtp->prio);
+	case RTP_PRIO_REALTIME:
+		if (RTP_PRIO_IS_IN_RANGE(param->sched_priority)) {
+			*policy = rtp->type == RTP_PRIO_FIFO ?
+			    SCHED_FIFO : SCHED_RR;
+			param->sched_priority = rtprio_to_p1bprio(rtp->prio);
+			return (0);
+		}
 		break;
-	default:
+	case RTP_PRIO_NORMAL:
 		*policy = SCHED_OTHER;
 		param->sched_priority = 0;
-		break;
+		return (0);
 	}
-	return (0);
+
+	return (EINVAL);
 }
 
 int
 _schedparam_to_rtp(int policy, const struct sched_param *param,
-	struct rtprio *rtp)
+    struct rtprio *rtp)
 {
-	switch(policy) {
-	case SCHED_RR:
-		rtp->type = RTP_PRIO_REALTIME;
-		rtp->prio = p1bprio_to_rtprio(param->sched_priority);
-		break;
+	switch (policy) {
 	case SCHED_FIFO:
-		rtp->type = RTP_PRIO_FIFO;
-		rtp->prio = p1bprio_to_rtprio(param->sched_priority);
+	case SCHED_RR:
+		if (P1B_PRIO_IS_IN_RT_RANGE(param->sched_priority)) {
+			rtp->type = policy == SCHED_FIFO ?
+			    RTP_PRIO_FIFO : RTP_PRIO_REALTIME;
+			rtp->prio = p1bprio_to_rtprio(param->sched_priority);
+			return (0);
+		}
 		break;
 	case SCHED_OTHER:
-	default:
 		rtp->type = RTP_PRIO_NORMAL;
 		rtp->prio = 0;
-		break;
+		return (0);
 	}
-	return (0);
+
+	return (EINVAL);
 }
 
 int
 _thr_getscheduler(lwpid_t lwpid, int *policy, struct sched_param *param)
 {
+	int error;
 	struct rtprio rtp;
-	int ret;
 
-	ret = rtprio_thread(RTP_LOOKUP, lwpid, &rtp);
-	if (ret == -1)
-		return (ret);
-	_rtp_to_schedparam(&rtp, policy, param);
-	return (0);
+	error = rtprio_thread(RTP_LOOKUP, lwpid, &rtp);
+	if (error != 0)
+		return (errno);
+	return (_rtp_to_schedparam(&rtp, policy, param));
 }
 
 int
 _thr_setscheduler(lwpid_t lwpid, int policy, const struct sched_param *param)
 {
+	int error;
 	struct rtprio rtp;
 
-	_schedparam_to_rtp(policy, param, &rtp);
-	return (rtprio_thread(RTP_SET, lwpid, &rtp));
+	error = _schedparam_to_rtp(policy, param, &rtp);
+	if (error != 0)
+		return (error);
+	error = rtprio_thread(RTP_SET, lwpid, &rtp);
+	return (error != 0) ? errno : 0;
 }
 
 void
