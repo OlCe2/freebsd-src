@@ -139,16 +139,11 @@ kern_sched_setparam(struct thread *td, struct thread *targettd,
     struct sched_param *param)
 {
 	struct proc *targetp;
-	int error;
 
 	targetp = targettd->td_proc;
 	PROC_LOCK_ASSERT(targetp, MA_OWNED);
 
-	error = p_cansched(td, targetp);
-	if (error == 0)
-		error = ksched_setparam(ksched, targettd,
-		    (const struct sched_param *)param);
-	return (error);
+	return (ksched_setparam(ksched, targettd, param));
 }
 
 int
@@ -238,10 +233,7 @@ kern_sched_setscheduler(struct thread *td, struct thread *targettd,
 	if (error)
 		return (error);
 
-	error = p_cansched(td, targetp);
-	if (error == 0)
-		error = ksched_setscheduler(ksched, targettd, policy,
-		    (const struct sched_param *)param);
+	error = ksched_setscheduler(ksched, targettd, policy, param);
 	return (error);
 }
 

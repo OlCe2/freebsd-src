@@ -122,23 +122,8 @@ thread_create(struct thread *td, struct rtprio *rtp,
 
 	p = td->td_proc;
 
-	if (rtp != NULL) {
-		switch(rtp->type) {
-		case RTP_PRIO_REALTIME:
-		case RTP_PRIO_FIFO:
-			/* Only root can set scheduler policy */
-			if (priv_check(td, PRIV_SCHED_SETPOLICY) != 0)
-				return (EPERM);
-			if (rtp->prio > RTP_PRIO_MAX)
-				return (EINVAL);
-			break;
-		case RTP_PRIO_NORMAL:
-			rtp->prio = 0;
-			break;
-		default:
-			return (EINVAL);
-		}
-	}
+	if ((error = rtp_set_check(td, rtp)) != 0)
+		return (error);
 
 #ifdef RACCT
 	if (racct_enable) {
@@ -195,10 +180,14 @@ thread_create(struct thread *td, struct rtprio *rtp,
 
 	tidhash_add(newtd);
 
-	/* ignore timesharing class */
-	if (rtp != NULL && !(td->td_pri_class == PRI_TIMESHARE &&
-	    rtp->type == RTP_PRIO_NORMAL))
-		rtp_to_pri(rtp, newtd);
+	/* Setup priorities. */
+	if (rtp != NULL && !(newtd->td_pri_class == PRI_TIMESHARE &&
+	    rtp->type == RTP_PRIO_NORMAL)) {
+		if (rtp->type == RTP_PRIO_NORMAL)
+			rtp->prio = 0;
+		error = rtp_set_thread(td, rtp, newtd);
+		KASSERT(error == 0, ("Can't set priority of new user thread"));
+	}
 
 	thread_lock(newtd);
 	TD_SET_CAN_RUN(newtd);

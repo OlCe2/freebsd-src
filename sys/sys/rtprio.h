@@ -34,7 +34,18 @@
 #ifndef _SYS_RTPRIO_H_
 #define _SYS_RTPRIO_H_
 
+#include <sys/_types.h>
 #include <sys/priority.h>
+
+#ifndef _LWPID_T_DECLARED
+typedef	__lwpid_t	lwpid_t;
+#define	_LWPID_T_DECLARED
+#endif
+
+#ifndef _PID_T_DECLARED
+typedef	__pid_t		pid_t;
+#define	_PID_T_DECLARED
+#endif
 
 /*
  * Realtime (and other types) priority specifications.
@@ -58,9 +69,17 @@
 #define RTP_PRIO_IS_REALTIME(P) PRI_IS_REALTIME(P)
 #define RTP_PRIO_NEED_RR(P)	PRI_NEED_RR(P)
 
-/* priority range */
+/*
+ * Priority range for the RTP_PRIO_FIFO, RTP_PRIO_REALTIME and RTP_PRIO_IDLE
+ * types.
+ */
 #define RTP_PRIO_MIN		0	/* Highest priority */
 #define RTP_PRIO_MAX		31	/* Lowest priority */
+#define RTP_PRIO_RANGE_SIZE	(RTP_PRIO_MAX - RTP_PRIO_MIN + 1)
+#define RTP_PRIO_IS_IN_RANGE(prio) ({					\
+	__typeof(prio) _pri = (prio);					\
+	RTP_PRIO_MIN <= _pri && _pri <= RTP_PRIO_MAX;			\
+})
 
 
 /*
@@ -125,9 +144,18 @@ struct rtprio {
 #define tsprio_to_p1bprio(P)	(RTP_TS_PRIO_MAX - (P) + P1B_TS_PRIO_MIN)
 #define p1bprio_to_tsprio(P)	(P1B_TS_PRIO_MAX - (P) + RTP_TS_PRIO_MIN)
 
+int	rtp_is_valid(const struct rtprio *);
 struct thread;
 int	rtp_can_set_prio(struct thread *, const struct rtprio *);
-int	rtp_to_pri(struct rtprio *, struct thread *);
+int	rtp_set_check(struct thread *, const struct rtprio *);
+int	kern_rtprio(struct thread *td, int function, pid_t pid,
+	    struct rtprio *rtp);
+int	kern_rtprio_thread(struct thread *td, int function, lwpid_t lwpid,
+	    struct rtprio *rtp);
+int	rtp_set_thread(struct thread *_curthread, const struct rtprio *,
+	    struct thread *_target_td);
+int	rtp_set_proc(struct thread *_curthread, const struct rtprio *,
+	    struct proc *_target_proc);
 void	pri_to_rtp(struct thread *, struct rtprio *);
 
 #else /* !_KERNEL */

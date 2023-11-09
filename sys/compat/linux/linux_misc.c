@@ -2766,6 +2766,8 @@ linux_ioprio2rtprio(int ioprio, struct rtprio *rtp)
 	default:
 		return (EINVAL);
 	}
+	KASSERT(rtp_is_valid(rtp) == 0,
+	    ("%s: Built an invalid 'struct rtprio'.", __func__));
 	return (0);
 }
 #undef LINUX_PRIO_DIVIDER
@@ -2889,6 +2891,7 @@ linux_ioprio_set(struct thread *td, struct linux_ioprio_set_args *args)
 
 	p = NULL;
 	td1 = NULL;
+	/* 'error' is 0 at this point. */
 	switch (args->which) {
 	case LINUX_IOPRIO_WHO_PROCESS:
 		if (args->who == 0) {
@@ -2903,18 +2906,8 @@ linux_ioprio_set(struct thread *td, struct linux_ioprio_set_args *args)
 			p = pfind(args->who);
 		if (p == NULL)
 			return (ESRCH);
-		if ((error = p_cansched(td, p))) {
-			PROC_UNLOCK(p);
-			break;
-		}
-		if (td1 != NULL) {
-			error = rtp_to_pri(&rtp, td1);
-		} else {
-			FOREACH_THREAD_IN_PROC(p, td1) {
-				if ((error = rtp_to_pri(&rtp, td1)) != 0)
-					break;
-			}
-		}
+		error = (td1 != NULL) ? rtp_set_thread(td, &rtp, td1) :
+		    rtp_set_proc(td, &rtp, p);
 		PROC_UNLOCK(p);
 		break;
 	case LINUX_IOPRIO_WHO_PGRP:
@@ -2933,14 +2926,10 @@ linux_ioprio_set(struct thread *td, struct linux_ioprio_set_args *args)
 		sx_sunlock(&proctree_lock);
 		LIST_FOREACH(p, &pg->pg_members, p_pglist) {
 			PROC_LOCK(p);
-			if (p->p_state == PRS_NORMAL &&
-			    p_cansched(td, p) == 0) {
-				FOREACH_THREAD_IN_PROC(p, td1) {
-					if ((error = rtp_to_pri(&rtp, td1)) != 0)
-						break;
-				}
-			}
+			if (p->p_state == PRS_NORMAL)
+				error = rtp_set_proc(td, &rtp, p);
 			PROC_UNLOCK(p);
+			/* Linux bails out on first error. */
 			if (error != 0)
 				break;
 		}
@@ -2953,14 +2942,10 @@ linux_ioprio_set(struct thread *td, struct linux_ioprio_set_args *args)
 		FOREACH_PROC_IN_SYSTEM(p) {
 			PROC_LOCK(p);
 			if (p->p_state == PRS_NORMAL &&
-			    p->p_ucred->cr_uid == args->who &&
-			    p_cansched(td, p) == 0) {
-				FOREACH_THREAD_IN_PROC(p, td1) {
-					if ((error = rtp_to_pri(&rtp, td1)) != 0)
-						break;
-				}
-			}
+			    p->p_ucred->cr_uid == args->who)
+				error = rtp_set_proc(td, &rtp, p);
 			PROC_UNLOCK(p);
+			/* Linux bails out on first error. */
 			if (error != 0)
 				break;
 		}
