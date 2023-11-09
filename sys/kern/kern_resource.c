@@ -327,10 +327,55 @@ CHECK_P1B_NON_NEGATIVE(P1B_TS_PRIO_MAX);
 _Static_assert(P1B_RT_PRIO_MAX - P1B_RT_PRIO_MIN + 1 >= 32,
     "POSIX mandates at least 32 priorities in the realtime range");
 
+/*
+ * Priority range for the RTP_PRIO_NORMAL type.
+ *
+ * These macros are not "public" because they depend on some priority internals.
+ * They are going to be replaced by a stable interface.
+ */
+#define TS_PRIO_MIN		0	/* Highest priority */
+/* Lowest priority */
+#define TS_PRIO_MAX		(PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE)
+#define TS_PRIO_RANGE_SIZE	(TS_PRIO_MAX - TS_PRIO_MIN + 1)
+/* See also rtp_is_valid() below. */
+#define TS_PRIO_IS_IN_RANGE(prio) ({					\
+	__typeof(prio) _pri = (prio);					\
+	TS_PRIO_MIN <= _pri && _pri <= TS_PRIO_MAX;			\
+})
+
 static int unprivileged_idprio;
 SYSCTL_INT(_security_bsd, OID_AUTO, unprivileged_idprio, CTLFLAG_RW,
     &unprivileged_idprio, 0,
     "Allow non-root users to set an idle priority (deprecated)");
+
+/*
+ * Check whether a 'struct rtprio' is filled correctly.
+ *
+ * Returns EINVAL on invalid values, ENOTSUP for values that are recognized by
+ * this implementation but whose corresponding functionality is not
+ * supported/implemented, or 0 if the structure is a valid specification.
+ */
+int
+rtp_is_valid(const struct rtprio *const rtp)
+{
+
+	switch (rtp->type) {
+	case RTP_PRIO_FIFO:
+	case RTP_PRIO_REALTIME:
+	case RTP_PRIO_IDLE:
+		if (RTP_PRIO_IS_IN_RANGE(rtp->prio))
+			return (0);
+		break;
+	case RTP_PRIO_NORMAL:
+		if (TS_PRIO_IS_IN_RANGE(rtp->prio))
+			return (0);
+		break;
+	case RTP_PRIO_ITHD:
+		return (ENOTSUP);
+	}
+
+	return (EINVAL);
+}
 
 /*
  * Indicates whether the passed thread has privilege to set the priority of any
@@ -381,67 +426,115 @@ rtp_can_set_prio(struct thread *const td, const struct rtprio *const rtp)
 }
 
 /*
- * Set realtime priority for LWP.
+ * Perform all checks preliminary to setting some priority via rtprio(2) that
+ * are independent of the target thread/process.
  */
-#ifndef _SYS_SYSPROTO_H_
-struct rtprio_thread_args {
-	int		function;
-	lwpid_t		lwpid;
-	struct rtprio	*rtp;
-};
-#endif
 int
-sys_rtprio_thread(struct thread *td, struct rtprio_thread_args *uap)
+rtp_set_check(struct thread *const td, const struct rtprio *const rtp)
 {
-	struct proc *p;
-	struct rtprio rtp;
-	struct thread *td1;
-	int cierror, error;
+	int error;
 
-	/* Perform copyin before acquiring locks if needed. */
-	if (uap->function == RTP_SET)
-		cierror = copyin(uap->rtp, &rtp, sizeof(struct rtprio));
-	else
-		cierror = 0;
+	if ((error = rtp_is_valid(rtp)) != 0)
+		return (error);
+	/*
+	 * Setting rtprio requires privilege.
+	 */
+	return (rtp_can_set_prio(td, rtp));
+}
 
-	if (uap->lwpid == 0 || uap->lwpid == td->td_tid) {
-		p = td->td_proc;
-		td1 = td;
-		PROC_LOCK(p);
-	} else {
-		td1 = tdfind(uap->lwpid, -1);
-		if (td1 == NULL)
-			return (ESRCH);
-		p = td1->td_proc;
+static inline bool
+has_immutable_prio(struct proc *p)
+{
+
+	return ((p->p_flag & P_KPROC) != 0);
+}
+
+/*
+ * Perform all operations that don't need locks upfront, in particular basic
+ * sanity checks.  All errors (EINVAL, EPERM) are final and must be reported as
+ * is.
+ */
+static inline int
+rtprio_preamble(struct thread *td, int function, struct rtprio *rtp)
+{
+
+	MPASS(td == curthread);
+
+	switch (function) {
+	case RTP_SET:
+		return (rtp_set_check(td, rtp));
+	case RTP_LOOKUP:
+		return (0);
 	}
 
-	switch (uap->function) {
+	return (EINVAL);
+}
+
+int
+kern_rtprio(struct thread *td, int function, pid_t pid, struct rtprio *rtp)
+{
+	struct proc *tp;
+	int error;
+
+	error = rtprio_preamble(td, function, rtp);
+	if (error != 0)
+		return (error);
+
+	if (pid == 0) {
+		tp = td->td_proc;
+		PROC_LOCK(tp);
+	} else {
+		tp = pfind(pid);
+		if (tp == NULL)
+			return (ESRCH);
+	}
+
+	switch (function) {
 	case RTP_LOOKUP:
-		if ((error = p_cansee(td, p)))
+		if ((error = p_cansee(td, tp)) != 0)
 			break;
-		pri_to_rtp(td1, &rtp);
-		PROC_UNLOCK(p);
-		return (copyout(&rtp, uap->rtp, sizeof(struct rtprio)));
-	case RTP_SET:
-		if ((error = p_cansched(td, p)) || (error = cierror))
-			break;
-
-		/* Disallow setting rtprio in most cases if not superuser. */
-
 		/*
-		 * Setting rtprio requires privilege.  See comments in
-		 * rtp_can_set_prio().
+		 * Return OUR priority if no pid specified,
+		 * or if one is, report the highest priority
+		 * in the process.  There isn't much more you can do as
+		 * there is only room to return a single priority.
+		 * Note: specifying our own pid is not the same
+		 * as leaving it zero.
 		 */
-		error = rtp_can_set_prio(td, &rtp);
-		if (error != 0)
-			break;
-		error = rtp_to_pri(&rtp, td1);
+		if (pid == 0)
+			pri_to_rtp(td, rtp);
+		else {
+			struct thread *tdp;
+			struct rtprio rtp2;
+
+			rtp->type = RTP_PRIO_IDLE;
+			rtp->prio = RTP_PRIO_MAX;
+			FOREACH_THREAD_IN_PROC(tp, tdp) {
+				pri_to_rtp(tdp, &rtp2);
+				if (rtp2.type < rtp->type ||
+				    (rtp2.type == rtp->type &&
+				    rtp2.prio < rtp->prio)) {
+					rtp->type = rtp2.type;
+					rtp->prio = rtp2.prio;
+				}
+			}
+		}
+		break;
+	case RTP_SET:
+		/*
+		 * If we are setting our own priority, set just our
+		 * thread but if we are doing another process,
+		 * do all the threads on that process. If we
+		 * specify our own pid we do the latter.
+		 */
+		error = (pid == 0) ? rtp_set_thread(td, rtp, td) :
+		    rtp_set_proc(td, rtp, tp);
 		break;
 	default:
-		error = EINVAL;
-		break;
+		__assert_unreachable();
 	}
-	PROC_UNLOCK(p);
+
+	PROC_UNLOCK(tp);
 	return (error);
 }
 
@@ -458,132 +551,196 @@ struct rtprio_args {
 int
 sys_rtprio(struct thread *td, struct rtprio_args *uap)
 {
-	struct proc *p;
-	struct thread *tdp;
 	struct rtprio rtp;
-	int cierror, error;
+	int error;
 
-	/* Perform copyin before acquiring locks if needed. */
-	if (uap->function == RTP_SET)
-		cierror = copyin(uap->rtp, &rtp, sizeof(struct rtprio));
-	else
-		cierror = 0;
-
-	if (uap->pid == 0) {
-		p = td->td_proc;
-		PROC_LOCK(p);
-	} else {
-		p = pfind(uap->pid);
-		if (p == NULL)
-			return (ESRCH);
-	}
-
-	switch (uap->function) {
-	case RTP_LOOKUP:
-		if ((error = p_cansee(td, p)))
-			break;
-		/*
-		 * Return OUR priority if no pid specified,
-		 * or if one is, report the highest priority
-		 * in the process.  There isn't much more you can do as
-		 * there is only room to return a single priority.
-		 * Note: specifying our own pid is not the same
-		 * as leaving it zero.
-		 */
-		if (uap->pid == 0) {
-			pri_to_rtp(td, &rtp);
-		} else {
-			struct rtprio rtp2;
-
-			rtp.type = RTP_PRIO_IDLE;
-			rtp.prio = RTP_PRIO_MAX;
-			FOREACH_THREAD_IN_PROC(p, tdp) {
-				pri_to_rtp(tdp, &rtp2);
-				if (rtp2.type <  rtp.type ||
-				    (rtp2.type == rtp.type &&
-				    rtp2.prio < rtp.prio)) {
-					rtp.type = rtp2.type;
-					rtp.prio = rtp2.prio;
-				}
-			}
-		}
-		PROC_UNLOCK(p);
-		return (copyout(&rtp, uap->rtp, sizeof(struct rtprio)));
-	case RTP_SET:
-		if ((error = p_cansched(td, p)) || (error = cierror))
-			break;
-
-		/*
-		 * Setting rtprio requires privilege.  See comments in
-		 * rtp_can_set_prio().
-		 */
-		error = rtp_can_set_prio(td, &rtp);
+	if (uap->function == RTP_SET) {
+		error = copyin(uap->rtp, &rtp, sizeof(struct rtprio));
 		if (error != 0)
-			break;
-
-		/*
-		 * If we are setting our own priority, set just our
-		 * thread but if we are doing another process,
-		 * do all the threads on that process. If we
-		 * specify our own pid we do the latter.
-		 */
-		if (uap->pid == 0) {
-			error = rtp_to_pri(&rtp, td);
-		} else {
-			FOREACH_THREAD_IN_PROC(p, td) {
-				if ((error = rtp_to_pri(&rtp, td)) != 0)
-					break;
-			}
-		}
-		break;
-	default:
-		error = EINVAL;
-		break;
+			return (error);
 	}
-	PROC_UNLOCK(p);
+
+	error = kern_rtprio(td, uap->function, uap->pid, &rtp);
+	if (error != 0)
+		return (error);
+
+	if (uap->function == RTP_LOOKUP)
+		error = copyout(&rtp, uap->rtp, sizeof(struct rtprio));
+
 	return (error);
 }
 
 int
-rtp_to_pri(struct rtprio *rtp, struct thread *td)
+kern_rtprio_thread(struct thread *td, int function, lwpid_t lwpid,
+    struct rtprio *rtp)
 {
-	u_char  newpri, oldclass, oldpri;
+	struct proc *tp;
+	struct thread *ttd;
+	int error;
+
+	error = rtprio_preamble(td, function, rtp);
+	if (error != 0)
+		return (error);
+
+	if (lwpid == 0) {
+		ttd = td;
+		tp = td->td_proc;
+		PROC_LOCK(tp);
+	} else {
+		ttd = tdfind(lwpid, -1);
+		if (ttd == NULL)
+			return (ESRCH);
+		tp = ttd->td_proc;
+	}
+
+	switch (function) {
+	case RTP_LOOKUP:
+		if ((error = p_cansee(td, tp)) != 0)
+			break;
+
+		pri_to_rtp(ttd, rtp);
+		break;
+	case RTP_SET:
+		error = rtp_set_thread(td, rtp, ttd);
+		break;
+	default:
+		/* Impossible case because of rtprio_preamble() above. */
+		__assert_unreachable();
+	}
+
+	PROC_UNLOCK(tp);
+	return (error);
+}
+
+/*
+ * Set realtime priority for LWP.
+ */
+#ifndef _SYS_SYSPROTO_H_
+struct rtprio_thread_args {
+	int		function;
+	lwpid_t		lwpid;
+	struct rtprio	*rtp;
+};
+#endif
+int
+sys_rtprio_thread(struct thread *td, struct rtprio_thread_args *uap)
+{
+	struct rtprio rtp;
+	int error;
+
+	if (uap->function == RTP_SET) {
+		error = copyin(uap->rtp, &rtp, sizeof(struct rtprio));
+		if (error != 0)
+			return (error);
+	}
+
+	error = kern_rtprio_thread(td, uap->function, uap->lwpid, &rtp);
+	if (error != 0)
+		return (error);
+
+	if (uap->function == RTP_LOOKUP)
+		error = copyout(&rtp, uap->rtp, sizeof(struct rtprio));
+
+	return (error);
+}
+
+static void
+_rtp_set(const struct rtprio *rtp, struct thread *ttd)
+{
+	u_char newpri, oldclass, oldpri;
+
+	KASSERT(rtp_is_valid(rtp) == 0,
+	    ("%s: Called with an invalid 'struct rtprio'.", __func__));
 
 	switch (RTP_PRIO_BASE(rtp->type)) {
 	case RTP_PRIO_REALTIME:
-		if (rtp->prio > RTP_PRIO_MAX)
-			return (EINVAL);
 		newpri = PRI_MIN_REALTIME + rtp->prio;
 		break;
 	case RTP_PRIO_NORMAL:
-		if (rtp->prio > (PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE))
-			return (EINVAL);
 		newpri = PRI_MIN_TIMESHARE + rtp->prio;
 		break;
 	case RTP_PRIO_IDLE:
-		if (rtp->prio > RTP_PRIO_MAX)
-			return (EINVAL);
 		newpri = PRI_MIN_IDLE + rtp->prio;
 		break;
 	default:
-		return (EINVAL);
+		/* rtp_is_valid() MUST be called prior to this function. */
+		__assert_unreachable();
 	}
 
-	thread_lock(td);
-	oldclass = td->td_pri_class;
-	sched_class(td, rtp->type);	/* XXX fix */
-	oldpri = td->td_user_pri;
-	sched_user_prio(td, newpri);
-	if (td->td_user_pri != oldpri && (oldclass != RTP_PRIO_NORMAL ||
-	    td->td_pri_class != RTP_PRIO_NORMAL))
-		sched_prio(td, td->td_user_pri);
-	if (TD_ON_UPILOCK(td) && oldpri != newpri) {
+	thread_lock(ttd);
+	oldclass = ttd->td_pri_class;
+	sched_class(ttd, rtp->type);	/* XXX fix */
+	oldpri = ttd->td_user_pri;
+	sched_user_prio(ttd, newpri);
+	if (ttd->td_user_pri != oldpri && (oldclass != RTP_PRIO_NORMAL ||
+	    ttd->td_pri_class != RTP_PRIO_NORMAL))
+		sched_prio(ttd, ttd->td_user_pri);
+	if (TD_ON_UPILOCK(ttd) && oldpri != newpri) {
 		critical_enter();
-		thread_unlock(td);
-		umtx_pi_adjust(td, oldpri);
+		thread_unlock(ttd);
+		umtx_pi_adjust(ttd, oldpri);
 		critical_exit();
 	} else
-		thread_unlock(td);
+		thread_unlock(ttd);
+}
+
+/*
+ * Set a thread's priority according to a RT Priority specification.
+ *
+ * Callers must ensure that 'rtp' is a valid 'struct rtprio' (via rtp_is_valid()
+ * or rtp_set_check()) and, if relevant, that 'curthread' has appropriate
+ * privileges to set the required priority (via rtp_can_set_prio() or
+ * rtp_set_check()).
+ *
+ * This function checks that 'curthread' is allowed to set the priority of the
+ * the target thread as per security policies.
+ *
+ * 'td' must be 'curthread'.  Can fail with EPERM if 'curthread' is not allowed
+ * to change the priority of 'target_td' or if 'target_td' cannot have its
+ * priority changed, else returns 0.
+ */
+int
+rtp_set_thread(struct thread *td, const struct rtprio *rtp,
+    struct thread *target_td)
+{
+	struct proc *tp = target_td->td_proc;
+
+	MPASS(td == curthread);
+	PROC_LOCK_ASSERT(tp, MA_OWNED);
+
+	if (p_cansched(td, tp) != 0 || has_immutable_prio(tp))
+		return (EPERM);
+
+	_rtp_set(rtp, target_td);
+
+	return (0);
+}
+
+/*
+ * Set a process' threads' priority according to a RT Priority specification.
+ *
+ * Similar to rtp_set_thread() but operates on all threads of a process.  See
+ * that function's documentation.
+ *
+ * 'td' must be 'curthread'.  Can fail with EPERM if 'curthread' is not allowed
+ * to change the priority of 'proc' or if 'proc' cannot have its priority
+ * changed, else returns 0.
+ */
+int
+rtp_set_proc(struct thread *td, const struct rtprio *rtp, struct proc *p)
+{
+	struct thread *target_td;
+
+	MPASS(td == curthread);
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+
+	if (p_cansched(td, p) != 0 || has_immutable_prio(p))
+		return (EPERM);
+
+	FOREACH_THREAD_IN_PROC(p, target_td) {
+		_rtp_set(rtp, target_td);
+	}
+
 	return (0);
 }
 

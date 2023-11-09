@@ -226,7 +226,7 @@ sched_set_fifo(struct task_struct *t)
 
 	rtp.prio = (RTP_PRIO_MIN + RTP_PRIO_MAX) / 2;
 	rtp.type = RTP_PRIO_FIFO;
-	rtp_to_pri(&rtp, t->task_thread);
+	(void)rtp_set_thread(curthread, &rtp, t->task_thread);
 }
 
 static inline void
@@ -236,7 +236,7 @@ sched_set_fifo_low(struct task_struct *t)
 
 	rtp.prio = RTP_PRIO_MAX;	/* lowest priority */
 	rtp.type = RTP_PRIO_FIFO;
-	rtp_to_pri(&rtp, t->task_thread);
+	(void)rtp_set_thread(curthread, &rtp, t->task_thread);
 }
 
 #endif	/* _LINUXKPI_LINUX_SCHED_H_ */

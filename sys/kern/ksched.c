@@ -154,35 +154,28 @@ ksched_setscheduler(struct ksched *ksched, struct thread *td, int policy,
     const struct sched_param *param)
 {
 	struct rtprio rtp;
-	int e;
+	int error = EINVAL;
 
-	e = 0;
-	switch(policy) {
+	switch (policy) {
 	case SCHED_RR:
 	case SCHED_FIFO:
 		if (P1B_PRIO_IS_IN_RT_RANGE(param->sched_priority)) {
 			rtp.prio = p1bprio_to_rtprio(param->sched_priority);
 			rtp.type = (policy == SCHED_FIFO) ? RTP_PRIO_FIFO :
 			    RTP_PRIO_REALTIME;
-			rtp_to_pri(&rtp, td);
-		} else {
-			e = EINVAL;
+			error = rtp_set_thread(curthread, &rtp, td);
 		}
 		break;
 	case SCHED_OTHER:
 		if (P1B_PRIO_IS_IN_TS_RANGE(param->sched_priority)) {
 			rtp.type = RTP_PRIO_NORMAL;
 			rtp.prio = p1bprio_to_tsprio(param->sched_priority);
-			rtp_to_pri(&rtp, td);
-		} else {
-			e = EINVAL;
+			error = rtp_set_thread(curthread, &rtp, td);
 		}
 		break;
-	default:
-		e = EINVAL;
-		break;
 	}
-	return (e);
+
+	return (error);
 }
 
 int
