@@ -35,7 +35,6 @@
 #include <sys/bus.h>
 #include <sys/conf.h>
 #include <sys/cpuset.h>
-#include <sys/rtprio.h>
 #include <sys/systm.h>
 #include <sys/interrupt.h>
 #include <sys/kernel.h>
