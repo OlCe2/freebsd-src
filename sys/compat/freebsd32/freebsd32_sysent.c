@@ -388,14 +388,14 @@ struct sysent freebsd32_sysent[] = {
 	{ .sy_narg = AS(mlockall_args), .sy_call = (sy_call_t *)sys_mlockall, .sy_auevent = AUE_MLOCKALL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 324 = mlockall */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)sys_munlockall, .sy_auevent = AUE_MUNLOCKALL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 325 = munlockall */
 	{ .sy_narg = AS(__getcwd_args), .sy_call = (sy_call_t *)sys___getcwd, .sy_auevent = AUE_GETCWD, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 326 = __getcwd */
-	{ .sy_narg = AS(sched_setparam_args), .sy_call = (sy_call_t *)sys_sched_setparam, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 327 = sched_setparam */
-	{ .sy_narg = AS(sched_getparam_args), .sy_call = (sy_call_t *)sys_sched_getparam, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 328 = sched_getparam */
-	{ .sy_narg = AS(sched_setscheduler_args), .sy_call = (sy_call_t *)sys_sched_setscheduler, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 329 = sched_setscheduler */
-	{ .sy_narg = AS(sched_getscheduler_args), .sy_call = (sy_call_t *)sys_sched_getscheduler, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 330 = sched_getscheduler */
+	{ .sy_narg = AS(sched_setparam_args), .sy_call = (sy_call_t *)sys_sched_setparam, .sy_auevent = AUE_SCHED_SETPARAM, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 327 = sched_setparam */
+	{ .sy_narg = AS(sched_getparam_args), .sy_call = (sy_call_t *)sys_sched_getparam, .sy_auevent = AUE_SCHED_GETPARAM, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 328 = sched_getparam */
+	{ .sy_narg = AS(sched_setscheduler_args), .sy_call = (sy_call_t *)sys_sched_setscheduler, .sy_auevent = AUE_SCHED_SETSCHEDULER, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 329 = sched_setscheduler */
+	{ .sy_narg = AS(sched_getscheduler_args), .sy_call = (sy_call_t *)sys_sched_getscheduler, .sy_auevent = AUE_SCHED_GETSCHEDULER, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 330 = sched_getscheduler */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)sys_sched_yield, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 331 = sched_yield */
-	{ .sy_narg = AS(sched_get_priority_max_args), .sy_call = (sy_call_t *)sys_sched_get_priority_max, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 332 = sched_get_priority_max */
-	{ .sy_narg = AS(sched_get_priority_min_args), .sy_call = (sy_call_t *)sys_sched_get_priority_min, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 333 = sched_get_priority_min */
-	{ .sy_narg = AS(freebsd32_sched_rr_get_interval_args), .sy_call = (sy_call_t *)freebsd32_sched_rr_get_interval, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 334 = freebsd32_sched_rr_get_interval */
+	{ .sy_narg = AS(sched_get_priority_max_args), .sy_call = (sy_call_t *)sys_sched_get_priority_max, .sy_auevent = AUE_SCHED_GET_PRIORITY_MAX, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 332 = sched_get_priority_max */
+	{ .sy_narg = AS(sched_get_priority_min_args), .sy_call = (sy_call_t *)sys_sched_get_priority_min, .sy_auevent = AUE_SCHED_GET_PRIORITY_MIN, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 333 = sched_get_priority_min */
+	{ .sy_narg = AS(freebsd32_sched_rr_get_interval_args), .sy_call = (sy_call_t *)freebsd32_sched_rr_get_interval, .sy_auevent = AUE_SCHED_RR_GET_INTERVAL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 334 = freebsd32_sched_rr_get_interval */
 	{ .sy_narg = AS(utrace_args), .sy_call = (sy_call_t *)sys_utrace, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 335 = utrace */
 	{ compat4(AS(freebsd4_freebsd32_sendfile_args),freebsd32_sendfile), .sy_auevent = AUE_SENDFILE, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 336 = freebsd4 freebsd32_sendfile */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },			/* 337 = kldsym */
