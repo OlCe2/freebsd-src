@@ -28,7 +28,7 @@
  */
 
 #ifndef _SYS_THR_H_
-#define	_SYS_THR_H_
+#define _SYS_THR_H_
 
 #include <sys/cdefs.h>
 #include <sys/_types.h>
@@ -40,25 +40,25 @@ typedef __size_t	size_t;
 #endif
 
 /* Create the thread in the suspended state. */
-#define	THR_SUSPENDED		0x0001
+#define THR_SUSPENDED		0x0001
 /* Create the system scope thread. */
-#define	THR_SYSTEM_SCOPE	0x0002
+#define THR_SYSTEM_SCOPE	0x0002
 
 struct thr_param {
-    void	(*start_func)(void *);	/* thread entry function. */
-    void	*arg;			/* argument for entry function. */
-    char	*stack_base;		/* stack base address. */
-    size_t	stack_size;		/* stack size. */
-    char	*tls_base;		/* tls base address. */
-    size_t	tls_size;		/* tls size. */
-    long	*child_tid;		/* address to store new TID. */
-    long	*parent_tid;		/* parent accesses the new TID here. */
-    int		flags;			/* thread flags. */
-    struct rtprio	*rtp;		/* Real-time scheduling priority */
-    void	*spare[3];		/* TODO: cpu affinity mask etc. */
+	void		(*start_func)(void *);	/* thread entry function. */
+	void		*arg;		/* argument for entry function. */
+	char		*stack_base;	/* stack base address. */
+	size_t		stack_size;	/* stack size. */
+	char		*tls_base;	/* tls base address. */
+	size_t		tls_size;	/* tls size. */
+	long		*child_tid;	/* address to store new TID. */
+	long		*parent_tid;	/* parent accesses the new TID here. */
+	int		flags;		/* thread flags. */
+	struct rtprio	*rtp;		/* Real-time scheduling priority. */
+	void		*spare[3];	/* TODO: cpu affinity mask etc. */
 };
 
-/* 
+/*
  * See pthread_*
  */
 #ifndef _KERNEL
