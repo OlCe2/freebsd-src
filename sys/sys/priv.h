@@ -186,7 +186,7 @@
 #define	PRIV_SCHED_DIFFCRED	200	/* Exempt scheduling other users. */
 #define	PRIV_SCHED_SETPRIORITY	201	/* Can set lower nice value for proc. */
 #define	PRIV_SCHED_RTPRIO	202	/* Can set real time scheduling. */
-#define	PRIV_SCHED_SETPOLICY	203	/* Can set scheduler policy. */
+#define	_PRIV_SCHED_SETPOLICY	203	/* Removed. */
 #define	_PRIV_SCHED_SET		204	/* Removed. */
 #define	_PRIV_SCHED_SETPARAM	205	/* Removed. */
 #define	PRIV_SCHED_CPUSET	206	/* Can manipulate cpusets. */

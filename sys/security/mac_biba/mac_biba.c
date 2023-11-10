@@ -1971,7 +1971,6 @@ biba_priv_check(struct ucred *cred, int priv)
 	case PRIV_SCHED_DIFFCRED:
 	case PRIV_SCHED_SETPRIORITY:
 	case PRIV_SCHED_RTPRIO:
-	case PRIV_SCHED_SETPOLICY:
 	case PRIV_SCHED_IDPRIO:
 
 	/*
