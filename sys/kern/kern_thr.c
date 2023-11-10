@@ -100,12 +100,12 @@ struct thr_create_initthr_args {
 };
 
 static int
-thr_create_initthr(struct thread *td, void *thunk)
+thr_create_initthr(struct thread *td, void *init_arg)
 {
 	struct thr_create_initthr_args *args;
 
 	/* Copy out the child tid. */
-	args = thunk;
+	args = init_arg;
 	if (args->tid != NULL && suword_lwpid(args->tid, td->td_tid))
 		return (EFAULT);
 
@@ -113,17 +113,15 @@ thr_create_initthr(struct thread *td, void *thunk)
 }
 
 static int
-thread_create(struct thread *td, struct rtprio *rtp,
-    int (*initialize_thread)(struct thread *, void *), void *thunk)
+thread_create(struct thread *td,
+    int (*initialize_thread)(struct thread *_new_td, void *_init_arg),
+    void *init_arg)
 {
 	struct thread *newtd;
 	struct proc *p;
 	int error;
 
 	p = td->td_proc;
-
-	if ((error = rtp_set_check(td, rtp)) != 0)
-		return (error);
 
 #ifdef RACCT
 	if (racct_enable) {
@@ -150,7 +148,7 @@ thread_create(struct thread *td, struct rtprio *rtp,
 
 	cpu_copy_thread(newtd, td);
 
-	error = initialize_thread(newtd, thunk);
+	error = initialize_thread(newtd, init_arg);
 	if (error != 0) {
 		thread_cow_free(newtd);
 		thread_free(newtd);
@@ -180,15 +178,6 @@ thread_create(struct thread *td, struct rtprio *rtp,
 
 	tidhash_add(newtd);
 
-	/* Setup priorities. */
-	if (rtp != NULL && !(newtd->td_pri_class == PRI_TIMESHARE &&
-	    rtp->type == RTP_PRIO_NORMAL)) {
-		if (rtp->type == RTP_PRIO_NORMAL)
-			rtp->prio = 0;
-		error = rtp_set_thread(td, rtp, newtd);
-		KASSERT(error == 0, ("Can't set priority of new user thread"));
-	}
-
 	thread_lock(newtd);
 	TD_SET_CAN_RUN(newtd);
 	sched_add(newtd, SRQ_BORING);
@@ -216,7 +205,7 @@ sys_thr_create(struct thread *td, struct thr_create_args *uap)
 	if ((error = copyin(uap->ctx, &args.ctx, sizeof(args.ctx))))
 		return (error);
 	args.tid = uap->id;
-	return (thread_create(td, NULL, thr_create_initthr, &args));
+	return (thread_create(td, thr_create_initthr, &args));
 }
 
 int
@@ -235,25 +224,26 @@ sys_thr_new(struct thread *td, struct thr_new_args *uap)
 }
 
 static int
-thr_new_initthr(struct thread *td, void *thunk)
+thr_new_initthr(struct thread *td, void *init_arg)
 {
+	struct thr_param const * const param = init_arg;
 	stack_t stack;
-	struct thr_param *param;
 	int error;
 
-	/*
-	 * Here we copy out tid to two places, one for child and one
-	 * for parent, because pthread can create a detached thread,
-	 * if parent wants to safely access child tid, it has to provide
-	 * its storage, because child thread may exit quickly and
-	 * memory is freed before parent thread can access it.
-	 */
-	param = thunk;
-	if ((param->child_tid != NULL &&
-	    suword_lwpid(param->child_tid, td->td_tid)) ||
-	    (param->parent_tid != NULL &&
-	    suword_lwpid(param->parent_tid, td->td_tid)))
-		return (EFAULT);
+	/* Setup priorities. */
+	if (param->rtp != NULL) {
+		if ((error = rtp_set_check(curthread, param->rtp)) != 0)
+			return (error);
+
+		if (!(td->td_pri_class == PRI_TIMESHARE &&
+		    param->rtp->type == RTP_PRIO_NORMAL)) {
+			if (param->rtp->type == RTP_PRIO_NORMAL)
+				param->rtp->prio = 0;
+			error = rtp_set_thread(curthread, param->rtp, td);
+			if (error != 0)
+				return (error);
+		}
+	}
 
 	/* Set up our machine context. */
 	stack.ss_sp = param->stack_base;
@@ -263,23 +253,38 @@ thr_new_initthr(struct thread *td, void *thunk)
 	if (error != 0)
 		return (error);
 	/* Setup user TLS address and TLS pointer register. */
-	return (cpu_set_user_tls(td, param->tls_base));
+	if ((error = cpu_set_user_tls(td, param->tls_base)) != 0)
+		return (error);
+
+	/*
+	 * Here we copy out tid to two places, one for child and one
+	 * for parent, because pthread can create a detached thread,
+	 * if parent wants to safely access child tid, it has to provide
+	 * its storage, because child thread may exit quickly and
+	 * memory is freed before parent thread can access it.
+	 */
+	if ((param->child_tid != NULL &&
+	    suword_lwpid(param->child_tid, td->td_tid)) ||
+	    (param->parent_tid != NULL &&
+	    suword_lwpid(param->parent_tid, td->td_tid)))
+		error = EFAULT;
+
+	return (error);
 }
 
 int
 kern_thr_new(struct thread *td, struct thr_param *param)
 {
-	struct rtprio rtp, *rtpp;
+	struct rtprio rtp;
 	int error;
 
-	rtpp = NULL;
-	if (param->rtp != 0) {
+	if (param->rtp != NULL) {
 		error = copyin(param->rtp, &rtp, sizeof(struct rtprio));
-		if (error)
+		if (error != 0)
 			return (error);
-		rtpp = &rtp;
+		param->rtp = &rtp;
 	}
-	return (thread_create(td, rtpp, thr_new_initthr, param));
+	return (thread_create(td, thr_new_initthr, param));
 }
 
 int
