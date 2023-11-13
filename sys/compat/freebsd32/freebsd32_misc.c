@@ -3246,7 +3246,7 @@ freebsd32_thr_new(struct thread *td,
 	param.spare[1] = PTRIN(param32.spare[1]);
 	param.spare[2] = PTRIN(param32.spare[2]);
 
-	return (kern_thr_new(td, &param));
+	return (kern_thr_new_with_sub_params_fetch(td, &param));
 }
 
 int

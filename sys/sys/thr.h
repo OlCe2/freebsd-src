@@ -60,10 +60,8 @@ struct thr_param {
 	void		*spare[3];	/* TODO: cpu affinity mask etc. */
 };
 
-/*
- * See pthread_*
- */
 #ifndef _KERNEL
+
 #include <sys/ucontext.h>
 
 #ifndef _PID_T_DECLARED
