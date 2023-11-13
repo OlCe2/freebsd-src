@@ -220,7 +220,7 @@ sys_thr_new(struct thread *td, struct thr_new_args *uap)
 	bzero(&param, sizeof(param));
 	if ((error = copyin(uap->param, &param, uap->param_size)))
 		return (error);
-	return (kern_thr_new(td, &param));
+	return (kern_thr_new_with_sub_params_fetch(td, &param));
 }
 
 static int
@@ -272,8 +272,15 @@ thr_new_initthr(struct thread *td, void *init_arg)
 	return (error);
 }
 
-int
+static int
 kern_thr_new(struct thread *td, struct thr_param *param)
+{
+
+	return (thread_create(td, thr_new_initthr, param));
+}
+
+int
+kern_thr_new_with_sub_params_fetch(struct thread *td, struct thr_param *param)
 {
 	struct rtprio rtp;
 	int error;
@@ -284,7 +291,8 @@ kern_thr_new(struct thread *td, struct thr_param *param)
 			return (error);
 		param->rtp = &rtp;
 	}
-	return (thread_create(td, thr_new_initthr, param));
+
+	return (kern_thr_new(td, param));
 }
 
 int
