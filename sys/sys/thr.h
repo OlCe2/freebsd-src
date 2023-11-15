@@ -45,8 +45,20 @@ struct rtprio;
 #define THR_PF_SUSPENDED	0x1
 /* Create the system scope thread. */
 #define THR_PF_SYSTEM_SCOPE	0x2
+
+/*
+ * This mask allows to deduce an unsigned number that is either 0, indicating
+ * that 'sched_attr' points to a 'struct rtprio', or else is the version of the
+ * POSIX scheduling attributes structure that 'sched_attr' points to (see
+ * 'struct sched_attr_v1' in <sys/sched.h>).
+ */
+#define THR_PF_VERSION_MASK		0xFF0000
+#define THR_PF_TO_VERSION(flags)	(((flags) & THR_PF_VERSION_MASK) >> 16)
+#define THR_PF_FROM_VERSION(version)	(((version) & 0xFF) << 16)
+
 /* Mask of all flags. */
-#define THR_PF_MASK		(THR_PF_SUSPENDED | THR_PF_SYSTEM_SCOPE)
+#define THR_PF_MASK		(THR_PF_SUSPENDED | THR_PF_SYSTEM_SCOPE | \
+    THR_PF_VERSION_MASK)
 
 struct thr_param {
 	void		(*start_func)(void *);	/* thread entry function. */
@@ -57,8 +69,15 @@ struct thr_param {
 	size_t		tls_size;	/* tls size. */
 	long		*child_tid;	/* address to store new TID. */
 	long		*parent_tid;	/* parent accesses the new TID here. */
-	int		flags;		/* thread flags. */
-	struct rtprio	*rtp;		/* Real-time scheduling priority. */
+	unsigned int	flags;		/* thread flags. */
+	/*
+	 * Scheduling attributes.
+	 *
+	 * Whether to treat the next pointer as a pointer to 'struct rtprio' or
+	 * some version of 'struct sched_attr' depends on the version number
+	 * (see THR_PF_VERSION_MASK and following macros above).
+	 */
+	void		*sched_attr;
 	void		*spare[3];	/* TODO: cpu affinity mask etc. */
 };
 

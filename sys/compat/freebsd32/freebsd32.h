@@ -316,7 +316,7 @@ struct thr_param32 {
 	uint32_t child_tid;
 	uint32_t parent_tid;
 	int32_t	 flags;
-	uint32_t rtp;
+	uint32_t sched_attr;
 	uint32_t spare[3];
 };
 
