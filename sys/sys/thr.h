@@ -39,6 +39,8 @@ typedef __size_t	size_t;
 #define _SIZE_T_DECLARED
 #endif
 
+struct rtprio;
+
 /* Create the thread in the suspended state. */
 #define THR_SUSPENDED		0x0001
 /* Create the system scope thread. */
