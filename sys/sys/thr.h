@@ -42,9 +42,11 @@ typedef __size_t	size_t;
 struct rtprio;
 
 /* Create the thread in the suspended state. */
-#define THR_SUSPENDED		0x0001
+#define THR_PF_SUSPENDED	0x1
 /* Create the system scope thread. */
-#define THR_SYSTEM_SCOPE	0x0002
+#define THR_PF_SYSTEM_SCOPE	0x2
+/* Mask of all flags. */
+#define THR_PF_MASK		(THR_PF_SUSPENDED | THR_PF_SYSTEM_SCOPE)
 
 struct thr_param {
 	void		(*start_func)(void *);	/* thread entry function. */

@@ -308,6 +308,15 @@ static int
 kern_thr_new(struct thread *td, struct thr_param *param)
 {
 
+	/*
+	 * Bail out on unknown flags to enforce ABI compatibility for correct
+	 * programs by preventing incorrect programs that specify
+	 * not-yet-defined flags from working at all (if they are not too
+	 * perverse).
+	 */
+	if ((param->flags & ~THR_PF_MASK) != 0)
+		return (EINVAL);
+
 	return (thread_create(td, thr_new_initthr, param));
 }
 
