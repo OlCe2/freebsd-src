@@ -162,7 +162,7 @@ _pthread_create(pthread_t * __restrict thread,
 	param.parent_tid = &new_thread->tid;
 	param.flags = 0;
 	if (new_thread->attr.flags & PTHREAD_SCOPE_SYSTEM)
-		param.flags |= THR_SYSTEM_SCOPE;
+		param.flags |= THR_PF_SYSTEM_SCOPE;
 	if (new_thread->attr.sched_inherit == PTHREAD_INHERIT_SCHED)
 		param.rtp = NULL;
 	else {
