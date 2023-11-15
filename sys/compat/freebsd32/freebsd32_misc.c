@@ -3241,7 +3241,7 @@ freebsd32_thr_new(struct thread *td,
 	param.child_tid = PTRIN(param32.child_tid);
 	param.parent_tid = PTRIN(param32.parent_tid);
 	param.flags = param32.flags;
-	param.rtp = PTRIN(param32.rtp);
+	param.sched_attr = PTRIN(param32.sched_attr);
 	param.spare[0] = PTRIN(param32.spare[0]);
 	param.spare[1] = PTRIN(param32.spare[1]);
 	param.spare[2] = PTRIN(param32.spare[2]);

@@ -132,21 +132,21 @@ struct thr_create_initthr_args {
 };
 
 static int
-thr_create_initthr(struct thread *td, void *init_arg)
+thr_create_initthr(struct thread *td, struct thread *new_td, void *init_arg)
 {
-	struct thr_create_initthr_args *args;
+	struct thr_create_initthr_args *const args = init_arg;
 
 	/* Copy out the child tid. */
-	args = init_arg;
-	if (args->tid != NULL && suword_lwpid(args->tid, td->td_tid))
+	if (args->tid != NULL && suword_lwpid(args->tid, new_td->td_tid))
 		return (EFAULT);
 
-	return (set_mcontext(td, &args->ctx.uc_mcontext));
+	return (set_mcontext(new_td, &args->ctx.uc_mcontext));
 }
 
 static int
 thread_create(struct thread *td,
-    int (*initialize_thread)(struct thread *_new_td, void *_init_arg),
+    int (*initialize_thread)(struct thread *_td, struct thread *_new_td,
+    void *_init_arg),
     void *init_arg)
 {
 	struct thread *newtd;
@@ -180,7 +180,7 @@ thread_create(struct thread *td,
 
 	cpu_copy_thread(newtd, td);
 
-	error = initialize_thread(newtd, init_arg);
+	error = initialize_thread(td, newtd, init_arg);
 	if (error != 0) {
 		thread_cow_free(newtd);
 		thread_free(newtd);
@@ -256,36 +256,72 @@ sys_thr_new(struct thread *td, struct thr_new_args *uap)
 }
 
 static int
-thr_new_initthr(struct thread *td, void *init_arg)
+thr_new_set_sched(struct thread *const td, struct thread *const new_td,
+    const u_char nb, void *const sched_attr)
 {
-	struct thr_param const * const param = init_arg;
+	struct rtprio *rtp;
+	const struct sched_attr_v1 *u_sched_attr;
+	struct sched_attr k_sched_attr;
+	int error;
+
+	MPASS(sched_attr != NULL);
+
+	switch (nb) {
+	case 0:
+		rtp = sched_attr;
+
+		error = rtp_set_check(td, rtp);
+		if (error != 0)
+			break;
+
+		if (!(new_td->td_pri_class == PRI_TIMESHARE &&
+		    rtp->type == RTP_PRIO_NORMAL)) {
+			if (rtp->type == RTP_PRIO_NORMAL)
+				rtp->prio = 0;
+			/* Currently can't fail (user threads). */
+			error = rtp_set_thread(td, rtp, new_td);
+		}
+
+		break;
+	case 1:
+		u_sched_attr = sched_attr;
+
+		_thr_sched_attr_from_v1(u_sched_attr, &k_sched_attr);
+		error = kern_thr_sched_set(td, new_td, &k_sched_attr);
+
+		break;
+	default:
+		__assert_unreachable();
+	}
+
+	return (error);
+}
+
+static int
+thr_new_initthr(struct thread *td, struct thread *new_td, void *init_arg)
+{
 	stack_t stack;
+	const struct thr_param *const param = init_arg;
 	int error;
 
 	/* Setup priorities. */
-	if (param->rtp != NULL) {
-		if ((error = rtp_set_check(curthread, param->rtp)) != 0)
-			return (error);
+	if (param->sched_attr != NULL) {
+		const u_char nb = THR_PF_TO_VERSION(param->flags);
 
-		if (!(td->td_pri_class == PRI_TIMESHARE &&
-		    param->rtp->type == RTP_PRIO_NORMAL)) {
-			if (param->rtp->type == RTP_PRIO_NORMAL)
-				param->rtp->prio = 0;
-			error = rtp_set_thread(curthread, param->rtp, td);
-			if (error != 0)
-				return (error);
-		}
+		error = thr_new_set_sched(td, new_td, nb, param->sched_attr);
+		if (error != 0)
+			return (error);
 	}
 
 	/* Set up our machine context. */
 	stack.ss_sp = param->stack_base;
 	stack.ss_size = param->stack_size;
 	/* Set upcall address to user thread entry function. */
-	error = cpu_set_upcall(td, param->start_func, param->arg, &stack);
+	error = cpu_set_upcall(new_td, param->start_func, param->arg, &stack);
 	if (error != 0)
 		return (error);
 	/* Setup user TLS address and TLS pointer register. */
-	if ((error = cpu_set_user_tls(td, param->tls_base)) != 0)
+	if ((error = cpu_set_user_tls(new_td, param->tls_base)) != 0)
 		return (error);
 
 	/*
@@ -296,9 +332,9 @@ thr_new_initthr(struct thread *td, void *init_arg)
 	 * memory is freed before parent thread can access it.
 	 */
 	if ((param->child_tid != NULL &&
-	    suword_lwpid(param->child_tid, td->td_tid)) ||
+	    suword_lwpid(param->child_tid, new_td->td_tid)) ||
 	    (param->parent_tid != NULL &&
-	    suword_lwpid(param->parent_tid, td->td_tid)))
+	    suword_lwpid(param->parent_tid, new_td->td_tid)))
 		error = EFAULT;
 
 	return (error);
@@ -314,7 +350,8 @@ kern_thr_new(struct thread *td, struct thr_param *param)
 	 * not-yet-defined flags from working at all (if they are not too
 	 * perverse).
 	 */
-	if ((param->flags & ~THR_PF_MASK) != 0)
+	if ((param->flags & ~THR_PF_MASK) != 0 ||
+	    THR_PF_TO_VERSION(param->flags) > 1)
 		return (EINVAL);
 
 	return (thread_create(td, thr_new_initthr, param));
@@ -323,14 +360,30 @@ kern_thr_new(struct thread *td, struct thr_param *param)
 int
 kern_thr_new_with_sub_params_fetch(struct thread *td, struct thr_param *param)
 {
-	struct rtprio rtp;
+	union {
+		struct rtprio rtp;
+		struct sched_attr_v1 posix_v1;
+	} sched_attr;
 	int error;
 
-	if (param->rtp != NULL) {
-		error = copyin(param->rtp, &rtp, sizeof(struct rtprio));
+	if (param->sched_attr != NULL) {
+		const u_char nb = THR_PF_TO_VERSION(param->flags);
+		switch (nb) {
+		case 0:
+			error = copyin(param->sched_attr, &sched_attr.rtp,
+			    sizeof(sched_attr.rtp));
+			break;
+		case 1:
+			error = copyin(param->sched_attr, &sched_attr.posix_v1,
+			    sizeof(sched_attr.posix_v1));
+			break;
+		default:
+			error = EINVAL;
+			break;
+		}
 		if (error != 0)
 			return (error);
-		param->rtp = &rtp;
+		param->sched_attr = &sched_attr;
 	}
 
 	return (kern_thr_new(td, param));
