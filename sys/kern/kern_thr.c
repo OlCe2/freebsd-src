@@ -112,83 +112,7 @@ thr_create_initthr(struct thread *td, void *thunk)
 	return (set_mcontext(td, &args->ctx.uc_mcontext));
 }
 
-int
-sys_thr_create(struct thread *td, struct thr_create_args *uap)
-    /* ucontext_t *ctx, long *id, int flags */
-{
-	struct thr_create_initthr_args args;
-	int error;
-
-	if ((error = copyin(uap->ctx, &args.ctx, sizeof(args.ctx))))
-		return (error);
-	args.tid = uap->id;
-	return (thread_create(td, NULL, thr_create_initthr, &args));
-}
-
-int
-sys_thr_new(struct thread *td, struct thr_new_args *uap)
-    /* struct thr_param * */
-{
-	struct thr_param param;
-	int error;
-
-	if (uap->param_size < 0 || uap->param_size > sizeof(param))
-		return (EINVAL);
-	bzero(&param, sizeof(param));
-	if ((error = copyin(uap->param, &param, uap->param_size)))
-		return (error);
-	return (kern_thr_new(td, &param));
-}
-
 static int
-thr_new_initthr(struct thread *td, void *thunk)
-{
-	stack_t stack;
-	struct thr_param *param;
-	int error;
-
-	/*
-	 * Here we copy out tid to two places, one for child and one
-	 * for parent, because pthread can create a detached thread,
-	 * if parent wants to safely access child tid, it has to provide
-	 * its storage, because child thread may exit quickly and
-	 * memory is freed before parent thread can access it.
-	 */
-	param = thunk;
-	if ((param->child_tid != NULL &&
-	    suword_lwpid(param->child_tid, td->td_tid)) ||
-	    (param->parent_tid != NULL &&
-	    suword_lwpid(param->parent_tid, td->td_tid)))
-		return (EFAULT);
-
-	/* Set up our machine context. */
-	stack.ss_sp = param->stack_base;
-	stack.ss_size = param->stack_size;
-	/* Set upcall address to user thread entry function. */
-	error = cpu_set_upcall(td, param->start_func, param->arg, &stack);
-	if (error != 0)
-		return (error);
-	/* Setup user TLS address and TLS pointer register. */
-	return (cpu_set_user_tls(td, param->tls_base));
-}
-
-int
-kern_thr_new(struct thread *td, struct thr_param *param)
-{
-	struct rtprio rtp, *rtpp;
-	int error;
-
-	rtpp = NULL;
-	if (param->rtp != 0) {
-		error = copyin(param->rtp, &rtp, sizeof(struct rtprio));
-		if (error)
-			return (error);
-		rtpp = &rtp;
-	}
-	return (thread_create(td, rtpp, thr_new_initthr, param));
-}
-
-int
 thread_create(struct thread *td, struct rtprio *rtp,
     int (*initialize_thread)(struct thread *, void *), void *thunk)
 {
@@ -291,6 +215,82 @@ fail:
 	}
 #endif
 	return (error);
+}
+
+int
+sys_thr_create(struct thread *td, struct thr_create_args *uap)
+    /* ucontext_t *ctx, long *id, int flags */
+{
+	struct thr_create_initthr_args args;
+	int error;
+
+	if ((error = copyin(uap->ctx, &args.ctx, sizeof(args.ctx))))
+		return (error);
+	args.tid = uap->id;
+	return (thread_create(td, NULL, thr_create_initthr, &args));
+}
+
+int
+sys_thr_new(struct thread *td, struct thr_new_args *uap)
+    /* struct thr_param * */
+{
+	struct thr_param param;
+	int error;
+
+	if (uap->param_size < 0 || uap->param_size > sizeof(param))
+		return (EINVAL);
+	bzero(&param, sizeof(param));
+	if ((error = copyin(uap->param, &param, uap->param_size)))
+		return (error);
+	return (kern_thr_new(td, &param));
+}
+
+static int
+thr_new_initthr(struct thread *td, void *thunk)
+{
+	stack_t stack;
+	struct thr_param *param;
+	int error;
+
+	/*
+	 * Here we copy out tid to two places, one for child and one
+	 * for parent, because pthread can create a detached thread,
+	 * if parent wants to safely access child tid, it has to provide
+	 * its storage, because child thread may exit quickly and
+	 * memory is freed before parent thread can access it.
+	 */
+	param = thunk;
+	if ((param->child_tid != NULL &&
+	    suword_lwpid(param->child_tid, td->td_tid)) ||
+	    (param->parent_tid != NULL &&
+	    suword_lwpid(param->parent_tid, td->td_tid)))
+		return (EFAULT);
+
+	/* Set up our machine context. */
+	stack.ss_sp = param->stack_base;
+	stack.ss_size = param->stack_size;
+	/* Set upcall address to user thread entry function. */
+	error = cpu_set_upcall(td, param->start_func, param->arg, &stack);
+	if (error != 0)
+		return (error);
+	/* Setup user TLS address and TLS pointer register. */
+	return (cpu_set_user_tls(td, param->tls_base));
+}
+
+int
+kern_thr_new(struct thread *td, struct thr_param *param)
+{
+	struct rtprio rtp, *rtpp;
+	int error;
+
+	rtpp = NULL;
+	if (param->rtp != 0) {
+		error = copyin(param->rtp, &rtp, sizeof(struct rtprio));
+		if (error)
+			return (error);
+		rtpp = &rtp;
+	}
+	return (thread_create(td, rtpp, thr_new_initthr, param));
 }
 
 int

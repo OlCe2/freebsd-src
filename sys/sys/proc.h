@@ -186,7 +186,6 @@ struct p_sched;
 struct proc;
 struct procdesc;
 struct racct;
-struct rtprio;
 struct sbuf;
 struct sleepqueue;
 struct socket;
@@ -1241,8 +1240,6 @@ void	thread_cow_get(struct thread *newtd, struct thread *td);
 void	thread_cow_free(struct thread *td);
 void	thread_cow_update(struct thread *td);
 void	thread_cow_synced(struct thread *td);
-int	thread_create(struct thread *td, struct rtprio *rtp,
-	    int (*initialize_thread)(struct thread *, void *), void *thunk);
 void	thread_exit(void) __dead2;
 void	thread_free(struct thread *td);
 void	thread_link(struct thread *td, struct proc *p);
