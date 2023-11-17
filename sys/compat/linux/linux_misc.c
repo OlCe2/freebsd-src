@@ -2704,20 +2704,6 @@ linux_execve(struct thread *td, struct linux_execve_args *args)
 	return (error);
 }
 
-static void
-linux_up_rtprio_if(struct thread *td1, struct rtprio *rtp)
-{
-	struct rtprio rtp2;
-
-	pri_to_rtp(td1, &rtp2);
-	if (rtp2.type <  rtp->type ||
-	    (rtp2.type == rtp->type &&
-	    rtp2.prio < rtp->prio)) {
-		rtp->type = rtp2.type;
-		rtp->prio = rtp2.prio;
-	}
-}
-
 #define	LINUX_PRIO_DIVIDER	RTP_PRIO_MAX / LINUX_IOPRIO_MAX
 
 static int
@@ -2779,14 +2765,14 @@ linux_ioprio_get(struct thread *td, struct linux_ioprio_get_args *args)
 	struct rtprio rtp;
 	struct pgrp *pg;
 	struct proc *p;
-	int error, found;
+	int error;
+	bool found;
 
 	p = NULL;
 	td1 = NULL;
 	error = 0;
-	found = 0;
-	rtp.type = RTP_PRIO_IDLE;
-	rtp.prio = RTP_PRIO_MAX;
+	found = false;
+
 	switch (args->which) {
 	case LINUX_IOPRIO_WHO_PROCESS:
 		if (args->who == 0) {
@@ -2801,18 +2787,10 @@ linux_ioprio_get(struct thread *td, struct linux_ioprio_get_args *args)
 			p = pfind(args->who);
 		if (p == NULL)
 			return (ESRCH);
-		if ((error = p_cansee(td, p))) {
-			PROC_UNLOCK(p);
-			break;
-		}
-		if (td1 != NULL) {
-			pri_to_rtp(td1, &rtp);
-		} else {
-			FOREACH_THREAD_IN_PROC(p, td1) {
-				linux_up_rtprio_if(td1, &rtp);
-			}
-		}
-		found++;
+
+		error = (td1 != NULL) ? rtp_get_thread(td, td1, &rtp) :
+		    rtp_get_proc(td, p, &rtp);
+		found = true;
 		PROC_UNLOCK(p);
 		break;
 	case LINUX_IOPRIO_WHO_PGRP:
@@ -2829,34 +2807,34 @@ linux_ioprio_get(struct thread *td, struct linux_ioprio_get_args *args)
 			}
 		}
 		sx_sunlock(&proctree_lock);
+
 		LIST_FOREACH(p, &pg->pg_members, p_pglist) {
 			PROC_LOCK(p);
-			if (p->p_state == PRS_NORMAL &&
-			    p_cansee(td, p) == 0) {
-				FOREACH_THREAD_IN_PROC(p, td1) {
-					linux_up_rtprio_if(td1, &rtp);
-					found++;
-				}
+			if (p->p_state == PRS_NORMAL) {
+				found = true;
+				error = rtp_get_proc(td, p, &rtp);
 			}
 			PROC_UNLOCK(p);
+			if (error != 0)
+				break;
 		}
 		PGRP_UNLOCK(pg);
 		break;
 	case LINUX_IOPRIO_WHO_USER:
 		if (args->who == 0)
 			args->who = td->td_ucred->cr_uid;
+
 		sx_slock(&allproc_lock);
 		FOREACH_PROC_IN_SYSTEM(p) {
 			PROC_LOCK(p);
 			if (p->p_state == PRS_NORMAL &&
-			    p->p_ucred->cr_uid == args->who &&
-			    p_cansee(td, p) == 0) {
-				FOREACH_THREAD_IN_PROC(p, td1) {
-					linux_up_rtprio_if(td1, &rtp);
-					found++;
-				}
+			    p->p_ucred->cr_uid == args->who) {
+				found = true;
+				error = rtp_get_proc(td, p, &rtp);
 			}
 			PROC_UNLOCK(p);
+			if (error != 0)
+				break;
 		}
 		sx_sunlock(&allproc_lock);
 		break;
@@ -2864,8 +2842,9 @@ linux_ioprio_get(struct thread *td, struct linux_ioprio_get_args *args)
 		error = EINVAL;
 		break;
 	}
+
 	if (error == 0) {
-		if (found != 0)
+		if (found)
 			td->td_retval[0] = linux_rtprio2ioprio(&rtp);
 		else
 			error = ESRCH;

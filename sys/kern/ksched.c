@@ -87,10 +87,12 @@ static __inline int
 getscheduler(struct ksched *ksched, struct thread *td, int *policy)
 {
 	struct rtprio rtp;
-	int e;
+	int error;
 
-	e = 0;
-	pri_to_rtp(td, &rtp);
+	error = rtp_get_thread(curthread, td, &rtp);
+	if (error != 0)
+		return (error);
+
 	switch (rtp.type) {
 	case RTP_PRIO_FIFO:
 		*policy = SCHED_FIFO;
@@ -98,11 +100,15 @@ getscheduler(struct ksched *ksched, struct thread *td, int *policy)
 	case RTP_PRIO_REALTIME:
 		*policy = SCHED_RR;
 		break;
-	default:
+	case RTP_PRIO_NORMAL:
 		*policy = SCHED_OTHER;
 		break;
+	default:
+		error = EOVERFLOW;
+		break;
 	}
-	return (e);
+
+	return (error);
 }
 
 int
@@ -122,24 +128,24 @@ ksched_getparam(struct ksched *ksched, struct thread *td,
     struct sched_param *param)
 {
 	struct rtprio rtp;
+	int error;
 
-	pri_to_rtp(td, &rtp);
-	if (RTP_PRIO_IS_REALTIME(rtp.type))
+	if ((error = rtp_get_thread(curthread, td, &rtp)) != 0)
+		return (error);
+
+	switch (RTP_PRIO_BASE(rtp.type)) {
+	case RTP_PRIO_REALTIME:
 		param->sched_priority = rtprio_to_p1bprio(rtp.prio);
-	else {
-		if (PRI_MIN_TIMESHARE < rtp.prio)
-			/*
-			 * This is not really representable with timeshare
-			 * priorities (due to the "feature" that kernel threads
-			 * can be in PRI_TIMESHARE while having a priority
-			 * numerically below PRI_MIN_TIMESHARE), so just report
-			 * the maximum we can.
-			 */
-			param->sched_priority = P1B_TS_PRIO_MAX;
-		else
-			param->sched_priority = tsprio_to_p1bprio(rtp.prio);
+		break;
+	case RTP_PRIO_NORMAL:
+		param->sched_priority = tsprio_to_p1bprio(rtp.prio);
+		break;
+	default:
+		error = EOVERFLOW;
+		break;
 	}
-	return (0);
+
+	return (error);
 }
 
 /*
