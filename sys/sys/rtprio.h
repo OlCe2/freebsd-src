@@ -156,7 +156,10 @@ int	rtp_set_thread(struct thread *_curthread, const struct rtprio *,
 	    struct thread *_target_td);
 int	rtp_set_proc(struct thread *_curthread, const struct rtprio *,
 	    struct proc *_target_proc);
-void	pri_to_rtp(struct thread *, struct rtprio *);
+int	rtp_get_thread(struct thread *_curthread, struct thread *_target_td,
+	    struct rtprio *);
+int	rtp_get_proc(struct thread *_curthread, struct proc *_target_proc,
+	    struct rtprio *);
 
 #else /* !_KERNEL */
 

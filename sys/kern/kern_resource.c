@@ -491,8 +491,6 @@ kern_rtprio(struct thread *td, int function, pid_t pid, struct rtprio *rtp)
 
 	switch (function) {
 	case RTP_LOOKUP:
-		if ((error = p_cansee(td, tp)) != 0)
-			break;
 		/*
 		 * Return OUR priority if no pid specified,
 		 * or if one is, report the highest priority
@@ -501,24 +499,8 @@ kern_rtprio(struct thread *td, int function, pid_t pid, struct rtprio *rtp)
 		 * Note: specifying our own pid is not the same
 		 * as leaving it zero.
 		 */
-		if (pid == 0)
-			pri_to_rtp(td, rtp);
-		else {
-			struct thread *tdp;
-			struct rtprio rtp2;
-
-			rtp->type = RTP_PRIO_IDLE;
-			rtp->prio = RTP_PRIO_MAX;
-			FOREACH_THREAD_IN_PROC(tp, tdp) {
-				pri_to_rtp(tdp, &rtp2);
-				if (rtp2.type < rtp->type ||
-				    (rtp2.type == rtp->type &&
-				    rtp2.prio < rtp->prio)) {
-					rtp->type = rtp2.type;
-					rtp->prio = rtp2.prio;
-				}
-			}
-		}
+		error = (pid == 0) ? rtp_get_thread(td, td, rtp) :
+		    rtp_get_proc(td, tp, rtp);
 		break;
 	case RTP_SET:
 		/*
@@ -595,10 +577,7 @@ kern_rtprio_thread(struct thread *td, int function, lwpid_t lwpid,
 
 	switch (function) {
 	case RTP_LOOKUP:
-		if ((error = p_cansee(td, tp)) != 0)
-			break;
-
-		pri_to_rtp(ttd, rtp);
+		error = rtp_get_thread(td, ttd, rtp);
 		break;
 	case RTP_SET:
 		error = rtp_set_thread(td, rtp, ttd);
@@ -744,26 +723,128 @@ rtp_set_proc(struct thread *td, const struct rtprio *rtp, struct proc *p)
 	return (0);
 }
 
-void
-pri_to_rtp(struct thread *td, struct rtprio *rtp)
+static int
+_rtp_get(struct thread *ttd, struct rtprio *rtp)
 {
+	u_char pri_class, pri;
 
-	thread_lock(td);
-	switch (PRI_BASE(td->td_pri_class)) {
+	thread_lock(ttd);
+	pri_class = ttd->td_pri_class;
+	pri = ttd->td_base_user_pri;
+	thread_unlock(ttd);
+
+#define _RTP_GET_IN_RANGE(min, max)					\
+	do {								\
+		if (__predict_false(pri < min || pri > max))		\
+			return (EOVERFLOW);				\
+		rtp->prio = pri - min;					\
+	} while (0)
+
+	switch (PRI_BASE(pri_class)) {
 	case PRI_REALTIME:
-		rtp->prio = td->td_base_user_pri - PRI_MIN_REALTIME;
+		_RTP_GET_IN_RANGE(PRI_MIN_REALTIME, PRI_MAX_REALTIME);
 		break;
 	case PRI_TIMESHARE:
-		rtp->prio = td->td_base_user_pri - PRI_MIN_TIMESHARE;
+		_RTP_GET_IN_RANGE(PRI_MIN_TIMESHARE, PRI_MAX_TIMESHARE);
 		break;
 	case PRI_IDLE:
-		rtp->prio = td->td_base_user_pri - PRI_MIN_IDLE;
+		_RTP_GET_IN_RANGE(PRI_MIN_IDLE, PRI_MAX_IDLE);
 		break;
 	default:
-		break;
+		return (EOVERFLOW);
 	}
-	rtp->type = td->td_pri_class;
-	thread_unlock(td);
+
+#undef _RTP_GET_IN_RANGE
+
+	rtp->type = pri_class;
+	MPASS(rtp_is_valid(rtp));
+	return (0);
+}
+
+/*
+ * Get a thread's priority expressed as a RT Priority specification.
+ *
+ * This function checks that 'curthread' is allowed to see the priority of the
+ * the target thread as per security policies.
+ *
+ * 'td' must be 'curthread'.  Can fail with EPERM if 'curthread' is not allowed
+ * to see the priority of 'target_td' or EOVERFLOW if the required priority
+ * can't be expressed as a RT priority specification, else returns 0.
+ */
+int
+rtp_get_thread(struct thread *td, struct thread *target_td, struct rtprio *rtp)
+{
+	struct proc *tp = target_td->td_proc;
+
+	MPASS(td == curthread);
+	PROC_LOCK_ASSERT(tp, MA_OWNED);
+
+	if (p_cansee(td, tp) != 0)
+		return (EPERM);
+
+	return (_rtp_get(target_td, rtp));
+}
+
+static const struct rtprio lowest_pri_rtp = {
+	.type = RTP_PRIO_IDLE,
+	.prio = RTP_PRIO_MAX
+};
+
+static inline struct rtprio
+_rtp_highest_pri(const struct rtprio *rtp1, const struct rtprio *rtp2)
+{
+
+	if (rtp1->type > rtp2->type) {
+		const struct rtprio *const tmp = rtp1;
+		rtp1 = rtp2;
+		rtp2 = tmp;
+	}
+
+	if (rtp1->type != rtp2->type) {
+		if (rtp1->type != RTP_PRIO_ITHD && rtp2->type == RTP_PRIO_FIFO)
+			return (*rtp2);
+		else
+			return (*rtp1);
+	}
+
+	return (rtp1->prio <= rtp2->prio) ? *rtp1 : *rtp2;
+}
+
+/*
+ * Get a process' threads' highest priority as a RT Priority specification.
+ *
+ * Similar to rtp_get_thread() but operates on all threads of a process and
+ * returns the highest priority of all of them.  See also that function's
+ * documentation.
+ *
+ * 'td' must be 'curthread'.  Can fail with EPERM if 'curthread' is not allowed
+ * to see the priority of 'target_td' or EOVERFLOW if the required priority
+ * can't be expressed as a RT priority specification, else returns 0.  In the
+ * case of EOVERFLOW, the initial content of '*rtp' will be crushed.
+ */
+int
+rtp_get_proc(struct thread *td, struct proc *p, struct rtprio *rtp)
+{
+	struct thread *ttd;
+	struct rtprio td_rtp;
+	int error;
+
+	MPASS(td == curthread);
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+
+	if (p_cansee(td, p) != 0)
+		return (EPERM);
+
+	*rtp = lowest_pri_rtp;
+
+	FOREACH_THREAD_IN_PROC(p, ttd) {
+		error = _rtp_get(ttd, &td_rtp);
+		if (error != 0)
+			return (error);
+		*rtp = _rtp_highest_pri(rtp, &td_rtp);
+	}
+
+	return (0);
 }
 
 #if defined(COMPAT_43)
