@@ -77,9 +77,9 @@ struct pthread_prio	_thr_priorities[3] = {
 };
 
 struct pthread_attr _pthread_attr_default = {
-	.sched_policy = SCHED_OTHER,
+	.sched_attr = { .policy = SCHED_OTHER,
+			.priority = 0 },
 	.sched_inherit = PTHREAD_INHERIT_SCHED,
-	.prio = 0,
 	.suspend = THR_CREATE_RUNNING,
 	.flags = PTHREAD_SCOPE_SYSTEM,
 	.stackaddr_attr = NULL,
@@ -372,8 +372,7 @@ _libpthread_init(struct pthread *curthread)
 static void
 init_main_thread(struct pthread *thread)
 {
-	struct sched_param sched_param;
-	int i;
+	int error;
 
 	/* Setup the thread attributes. */
 	thr_self(&thread->tid);
@@ -416,15 +415,16 @@ init_main_thread(struct pthread *thread)
 	thread->cancel_async = 0;
 
 	/* Initialize the mutex queues */
-	for (i = 0; i < TMQ_NITEMS; i++)
+	for (int i = 0; i < TMQ_NITEMS; i++)
 		TAILQ_INIT(&thread->mq[i]);
 
 	thread->state = PS_RUNNING;
 
-	if (_thr_getscheduler(thread->tid, &thread->attr.sched_policy,
-	    &sched_param) != 0)
-		PANIC("Can't get valid userspace scheduling parameters");
-	thread->attr.prio = sched_param.sched_priority;
+	error = thr_sched_get(THR_SCHED_FLAGS_FROM_VERSION(1), TID(thread),
+	    &thread->attr.sched_attr, sizeof(thread->attr.sched_attr));
+	if (error != 0)
+		PANIC("Can't get valid userspace scheduling parameters (%d)",
+		    error);
 
 #ifdef _PTHREAD_FORCED_UNWIND
 	thread->unwind_stackend = _usrstack;

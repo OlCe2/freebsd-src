@@ -235,7 +235,7 @@ _thr_attr_getschedparam(const pthread_attr_t * __restrict attr,
 	if (attr == NULL || *attr == NULL || param == NULL)
 		return (EINVAL);
 
-	param->sched_priority = (*attr)->prio;
+	_thr_sched_param_from_v1(&(*attr)->sched_attr, param);
 	return (0);
 }
 
@@ -250,7 +250,7 @@ _thr_attr_getschedpolicy(const pthread_attr_t * __restrict attr,
 	if (attr == NULL || *attr == NULL || policy == NULL)
 		return (EINVAL);
 
-	*policy = (*attr)->sched_policy;
+	*policy = (*attr)->sched_attr.policy;
 	return (0);
 }
 
@@ -403,12 +403,12 @@ int
 _thr_attr_setschedparam(pthread_attr_t * __restrict attr,
     const struct sched_param * __restrict param)
 {
-	int policy;
+	__typeof((*attr)->sched_attr.policy) policy;
 
 	if (attr == NULL || *attr == NULL || param == NULL)
 		return (EINVAL);
 
-	policy = (*attr)->sched_policy;
+	policy = (*attr)->sched_attr.policy;
 
 	if (policy == SCHED_FIFO || policy == SCHED_RR) {
 		if (param->sched_priority < _thr_priorities[policy-1].pri_min ||
@@ -422,9 +422,7 @@ _thr_attr_setschedparam(pthread_attr_t * __restrict attr,
 		 */
 	}
 
-	(*attr)->prio = param->sched_priority;
-
-	return (0);
+	return (_thr_sched_param_to_v1(param, &(*attr)->sched_attr));
 }
 
 __weak_reference(_thr_attr_setschedpolicy, pthread_attr_setschedpolicy);
@@ -438,8 +436,8 @@ _thr_attr_setschedpolicy(pthread_attr_t *attr, int policy)
 	    policy < SCHED_FIFO || policy > SCHED_RR)
 		return (EINVAL);
 
-	(*attr)->sched_policy = policy;
-	(*attr)->prio = _thr_priorities[policy-1].pri_default;
+	(*attr)->sched_attr.policy = policy;
+	(*attr)->sched_attr.priority = _thr_priorities[policy-1].pri_default;
 	return (0);
 }
 

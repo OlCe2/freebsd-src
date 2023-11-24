@@ -40,26 +40,41 @@ __weak_reference(_pthread_setprio, pthread_setprio);
 int
 _pthread_setprio(pthread_t pthread, int prio)
 {
-	struct pthread	*curthread = _get_curthread();
-	struct sched_param	param;
-	int	error;
+	struct pthread *curthread = _get_curthread();
+	struct sched_attr_v1 *attr;
+	int error;
 
-	param.sched_priority = prio;
 	if (pthread == curthread)
 		THR_LOCK(curthread);
-	else if ((error = _thr_find_thread(curthread, pthread,
-	    /*include dead*/0)))
+	/* Arg 0 is to include dead threads. */
+	else if ((error = _thr_find_thread(curthread, pthread, 0)))
 		return (error);
-	if (pthread->attr.sched_policy == SCHED_OTHER ||
-	    pthread->attr.prio == prio) {
-		pthread->attr.prio = prio;
+
+	attr = &pthread->attr.sched_attr;
+	if (attr->priority == prio)
+		error = 0;
+	else if (attr->policy == SCHED_OTHER) {
+		attr->priority = prio;
 		error = 0;
 	} else {
-		error = _thr_setscheduler(pthread->tid,
-			pthread->attr.sched_policy, &param);
+		struct sched_attr_v1 cand_attr = *attr;
+
+		cand_attr.priority = prio;
+		if (cand_attr.priority != prio) {
+			/* Wraparound. */
+			error = EINVAL;
+			goto unlock_exit;
+		}
+
+		error = thr_sched_set(THR_SCHED_FLAGS_FROM_VERSION(1),
+		    TID(pthread), &cand_attr, sizeof(cand_attr));
 		if (error == 0)
-			pthread->attr.prio = prio;
+			*attr = cand_attr;
+		else
+			error = errno;
 	}
+
+unlock_exit:
 	THR_THREAD_UNLOCK(curthread, pthread);
 	return (error);
 }
