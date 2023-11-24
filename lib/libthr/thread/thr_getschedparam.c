@@ -44,11 +44,12 @@
 __weak_reference(_pthread_getschedparam, pthread_getschedparam);
 
 int
-_pthread_getschedparam(pthread_t pthread, int * __restrict policy, 
+_pthread_getschedparam(pthread_t pthread, int * __restrict policy,
     struct sched_param * __restrict param)
 {
-	struct pthread *curthread = _get_curthread();
-	int ret = 0;
+	struct pthread *const curthread = _get_curthread();
+	struct sched_attr_v1 *attr;
+	int error;
 
 	if (policy == NULL || param == NULL)
 		return (EINVAL);
@@ -59,10 +60,14 @@ _pthread_getschedparam(pthread_t pthread, int * __restrict policy,
 	 */
 	if (pthread == curthread)
 		THR_LOCK(curthread);
-	else if ((ret = _thr_find_thread(curthread, pthread, /*include dead*/0)))
-		return (ret);
-	*policy = pthread->attr.sched_policy;
-	param->sched_priority = pthread->attr.prio;
+	else if ((error = _thr_find_thread(curthread, pthread,
+	    /*include dead*/0)))
+		return (error);
+
+	attr = &pthread->attr.sched_attr;
+	*policy = attr->policy;
+	_thr_sched_param_from_v1(attr, param);
+
 	THR_THREAD_UNLOCK(curthread, pthread);
-	return (ret);
+	return (0);
 }

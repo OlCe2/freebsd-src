@@ -35,22 +35,24 @@
 /*
  * Include files.
  */
-#include <sys/types.h>
-#include <sys/time.h>
-#include <sys/queue.h>
 #include <sys/param.h>
 #include <sys/cpuset.h>
+#include <sys/queue.h>
+#include <sys/sched.h>
+#include <sys/thr.h>
+#include <sys/time.h>
+
 #include <machine/atomic.h>
+
 #include <errno.h>
 #include <limits.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
-#include <unistd.h>
 #include <ucontext.h>
-#include <sys/thr.h>
-#include <pthread.h>
+#include <unistd.h>
 
 __NULLABILITY_PRAGMA_PUSH
 
@@ -260,10 +262,9 @@ struct pthread_atfork {
 };
 
 struct pthread_attr {
-	int	sched_policy;
-	int	sched_inherit;
-	int	prio;
 	int	suspend;
+	int	sched_inherit;
+	struct sched_attr_v1 sched_attr;
 #define	THR_STACK_USER		0x100	/* 0xFF reserved for <pthread.h> */
 	int	flags;
 	void	*stackaddr_attr;
@@ -833,18 +834,45 @@ void	_thr_ast(struct pthread *) __hidden;
 void	_thr_report_creation(struct pthread *curthread,
 	    struct pthread *newthread) __hidden;
 void	_thr_report_death(struct pthread *curthread) __hidden;
-int	_thr_getscheduler(lwpid_t, int *, struct sched_param *) __hidden;
-int	_thr_setscheduler(lwpid_t, int, const struct sched_param *) __hidden;
+
+/*
+ * The following assertion ensures that the code of the two conversion functions
+ * just afterwards is correct.
+ */
+_Static_assert(sizeof(struct sched_param) ==
+    sizeof(((struct sched_param *)NULL)->sched_priority),
+    "'struct sched_param' has grown a member.  You may want to revise "
+    "the _thr_sched_param*() conversion functions and probably will "
+    "need to create a new userland/kernel interface structure and "
+    "new conversion functions for it.");
+
+static inline int
+_thr_sched_param_to_v1(const struct sched_param *__restrict const param,
+    struct sched_attr_v1 *__restrict const attr_v1)
+{
+
+	attr_v1->priority = param->sched_priority;
+	if (attr_v1->priority != param->sched_priority)
+		/* Wraparound. */
+		return (EINVAL);
+	return (0);
+}
+
+static inline void
+_thr_sched_param_from_v1(
+    const struct sched_attr_v1 *__restrict const attr_v1,
+    struct sched_param *__restrict const param)
+{
+
+	param->sched_priority = attr_v1->priority;
+}
+
 void	_thr_signal_prefork(void) __hidden;
 void	_thr_signal_postfork(void) __hidden;
 void	_thr_signal_postfork_child(void) __hidden;
 void	_thr_suspend_all_lock(struct pthread *) __hidden;
 void	_thr_suspend_all_unlock(struct pthread *) __hidden;
 void	_thr_try_gc(struct pthread *, struct pthread *) __hidden;
-int	_rtp_to_schedparam(const struct rtprio *rtp, int *policy,
-		struct sched_param *param) __hidden;
-int	_schedparam_to_rtp(int policy, const struct sched_param *param,
-		struct rtprio *rtp) __hidden;
 void	_thread_bp_create(void);
 void	_thread_bp_death(void);
 int	_sched_yield(void);

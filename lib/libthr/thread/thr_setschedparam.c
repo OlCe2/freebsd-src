@@ -47,29 +47,44 @@ __weak_reference(_pthread_setschedparam, pthread_setschedparam);
  * in kernel, doing it in userland is no-op.
  */
 int
-_pthread_setschedparam(pthread_t pthread, int policy, 
-	const struct sched_param *param)
+_pthread_setschedparam(pthread_t pthread, int policy,
+    const struct sched_param *param)
 {
-	struct pthread	*curthread = _get_curthread();
-	int	error;
+	struct pthread *const curthread = _get_curthread();
+	struct sched_attr_v1 *attr, cand_attr;
+	int error;
+
+	cand_attr.policy = policy;
+	if (cand_attr.policy != policy)
+		/* Wraparound. */
+		return (EINVAL);
+
+	error = _thr_sched_param_to_v1(param, &cand_attr);
+	if (error != 0)
+		return (error);
 
 	if (pthread == curthread)
 		THR_LOCK(curthread);
-	else if ((error = _thr_find_thread(curthread, pthread,
-		 /*include dead*/0)) != 0)
+	/* Arg 0 is to include dead threads. */
+	else if ((error = _thr_find_thread(curthread, pthread, 0)) != 0)
 		return (error);
-	if (pthread->attr.sched_policy == policy &&
-	    (policy == SCHED_OTHER ||
-	     pthread->attr.prio == param->sched_priority)) {
-		pthread->attr.prio = param->sched_priority;
-		THR_THREAD_UNLOCK(curthread, pthread);
-		return (0);
+
+	attr = &pthread->attr.sched_attr;
+	if (attr->policy == cand_attr.policy &&
+	    attr->priority == cand_attr.priority)
+		error = 0;
+	else if (policy == SCHED_OTHER && attr->policy == policy) {
+		*attr = cand_attr;
+		error = 0;
+	} else {
+		error = thr_sched_set(THR_SCHED_FLAGS_FROM_VERSION(1),
+		    TID(pthread), &cand_attr, sizeof(cand_attr));
+		if (error == 0)
+			*attr = cand_attr;
+		else
+			error = errno;
 	}
-	error = _thr_setscheduler(pthread->tid, policy, param);
-	if (error == 0) {
-		pthread->attr.sched_policy = policy;
-		pthread->attr.prio = param->sched_priority;
-	}
+
 	THR_THREAD_UNLOCK(curthread, pthread);
 	return (error);
 }

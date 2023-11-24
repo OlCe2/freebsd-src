@@ -29,7 +29,6 @@
 
 #include "namespace.h"
 #include <sys/types.h>
-#include <sys/rtprio.h>
 #include <sys/signalvar.h>
 #include <errno.h>
 #include <link.h>
@@ -55,8 +54,6 @@ _pthread_create(pthread_t * __restrict thread,
 {
 	struct pthread *curthread, *new_thread;
 	struct thr_param param;
-	struct sched_param sched_param;
-	struct rtprio rtp;
 	sigset_t set, oset;
 	cpuset_t *cpusetp;
 	int i, cpusetsize, create_suspended, locked, old_stack_prot, ret;
@@ -96,8 +93,7 @@ _pthread_create(pthread_t * __restrict thread,
 		else
 			new_thread->attr.flags &= ~PTHREAD_SCOPE_SYSTEM;
 
-		new_thread->attr.prio = curthread->attr.prio;
-		new_thread->attr.sched_policy = curthread->attr.sched_policy;
+		new_thread->attr.sched_attr = curthread->attr.sched_attr;
 	}
 
 	new_thread->tid = TID_TERMINATED;
@@ -164,14 +160,10 @@ _pthread_create(pthread_t * __restrict thread,
 	if (new_thread->attr.flags & PTHREAD_SCOPE_SYSTEM)
 		param.flags |= THR_PF_SYSTEM_SCOPE;
 	if (new_thread->attr.sched_inherit == PTHREAD_INHERIT_SCHED)
-		param.rtp = NULL;
+		param.sched_attr = NULL;
 	else {
-		sched_param.sched_priority = new_thread->attr.prio;
-		ret = _schedparam_to_rtp(new_thread->attr.sched_policy,
-			&sched_param, &rtp);
-		if (ret != 0)
-			goto err_before_thread_created;
-		param.rtp = &rtp;
+		param.flags |= THR_PF_FROM_VERSION(1);
+		param.sched_attr = &new_thread->attr.sched_attr;
 	}
 
 	/* Schedule the new thread. */
@@ -198,7 +190,6 @@ _pthread_create(pthread_t * __restrict thread,
 		__sys_sigprocmask(SIG_SETMASK, &oset, NULL);
 
 	if (ret != 0) {
-err_before_thread_created:
 		if (!locked)
 			THR_THREAD_LOCK(curthread, new_thread);
 		new_thread->state = PS_DEAD;
