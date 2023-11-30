@@ -1095,6 +1095,9 @@ struct	proc *pfind_any_locked(pid_t pid); /* Find process by id, locked. */
 struct	pgrp *pgfind(pid_t);		/* Find process group by id. */
 void	pidhash_slockall(void);		/* Shared lock all pid hash lists. */
 void	pidhash_sunlockall(void);	/* Shared unlock all pid hash lists. */
+struct	thread *tdfind(lwpid_t, pid_t);	/* Find thread, PID may restrict. */
+void	tidhash_add(struct thread *);
+void	tidhash_remove(struct thread *);
 
 struct	fork_req {
 	int		fr_flags;
@@ -1203,10 +1206,6 @@ void	setsugid(struct proc *p);
 bool	should_yield(void);
 int	sigonstack(size_t sp);
 void	stopevent(struct proc *, u_int, u_int);
-struct	thread *tdfind(lwpid_t, pid_t);
-void	threadinit(void);
-void	tidhash_add(struct thread *);
-void	tidhash_remove(struct thread *);
 void	cpu_idle(int);
 int	cpu_idle_wakeup(int);
 extern	void (*cpu_idle_hook)(sbintime_t);	/* Hook to machdep CPU idler. */
@@ -1233,6 +1232,7 @@ void	cpu_thread_alloc(struct thread *);
 void	cpu_thread_clean(struct thread *);
 void	cpu_thread_exit(struct thread *);
 void	cpu_thread_free(struct thread *);
+void	threadinit(void);
 struct	thread *thread_alloc(int pages);
 int	thread_check_susp(struct thread *td, bool sleep);
 void	thread_cow_get_proc(struct thread *newtd, struct proc *p);
