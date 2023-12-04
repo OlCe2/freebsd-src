@@ -28,6 +28,7 @@
 #ifndef _SYS_SYSCALLSUBR_H_
 #define _SYS_SYSCALLSUBR_H_
 
+#include <sys/types.h>
 #include <sys/signal.h>
 #include <sys/socket.h>
 #include <sys/mac.h>
@@ -55,6 +56,7 @@ struct msqid_ds;
 struct pollfd;
 struct ogetdirentries_args;
 struct rlimit;
+struct rtprio;
 struct rusage;
 struct sched_param;
 struct sembuf;
@@ -302,6 +304,14 @@ int	kern_renameat(struct thread *td, int oldfd, const char *old, int newfd,
 	    const char *new, enum uio_seg pathseg);
 int	kern_frmdirat(struct thread *td, int dfd, const char *path, int fd,
 	    enum uio_seg pathseg, int flag);
+int	kern_rtprio_by_id(struct thread *td, int function, pid_t pid,
+	    struct rtprio *rtp);
+int	kern_rtprio(struct thread *td, int function, struct proc *tp,
+	    struct rtprio *rtp);
+int	kern_rtprio_thread_by_id(struct thread *td, int function, lwpid_t lwpid,
+	    struct rtprio *rtp);
+int	kern_rtprio_thread(struct thread *td, int function,
+	    struct thread *target_td, struct rtprio *rtp);
 int	kern_sched_getparam(struct thread *td, struct thread *targettd,
 	    struct sched_param *param);
 int	kern_sched_getscheduler(struct thread *td, struct thread *targettd,

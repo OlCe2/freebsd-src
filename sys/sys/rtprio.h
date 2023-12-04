@@ -202,10 +202,6 @@ int	rtp_is_valid(const struct rtprio *);
 struct thread;
 int	rtp_can_set_prio(struct thread *, const struct rtprio *);
 int	rtp_set_check(struct thread *, const struct rtprio *);
-int	kern_rtprio(struct thread *td, int function, pid_t pid,
-	    struct rtprio *rtp);
-int	kern_rtprio_thread(struct thread *td, int function, lwpid_t lwpid,
-	    struct rtprio *rtp);
 int	rtp_set_thread(struct thread *_curthread, const struct rtprio *,
 	    struct thread *_target_td);
 int	rtp_set_proc(struct thread *_curthread, const struct rtprio *,
