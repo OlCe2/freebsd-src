@@ -471,53 +471,95 @@ rtprio_preamble(struct thread *td, int function, struct rtprio *rtp)
 	return (EINVAL);
 }
 
+/*
+ * Perform target-thread-dependent checks and set priority.
+ *
+ * If RP_THREAD_ONLY is passed, then only the priority of thread 'td' is set,
+ * and not that of other threads of 'tp'.
+ */
+#define RP_THREAD_ONLY		1
+#define RP_FLAG_MASK		RP_THREAD_ONLY
+static int
+rtprio_postamble(struct thread *td, int function, int flags, struct proc *tp,
+    struct rtprio *rtp)
+{
+	int error;
+
+	KASSERT((flags & ~RP_FLAG_MASK) == 0,
+	    ("%s: Unknown flags passed", __func__));
+	KASSERT((flags & RP_THREAD_ONLY) == 0 || tp == td->td_proc,
+	    ("%s: RP_THREAD_ONLY passed but proc is not td's",
+	    __func__));
+	PROC_LOCK_ASSERT(tp, MA_OWNED);
+
+	switch (function) {
+	case RTP_LOOKUP:
+		error = (flags & RP_THREAD_ONLY) ?
+		    rtp_get_thread(td, td, rtp) :
+		    rtp_get_proc(td, tp, rtp);
+		break;
+	case RTP_SET:
+		error = (flags & RP_THREAD_ONLY) ?
+		    rtp_set_thread(td, rtp, td) :
+		    rtp_set_proc(td, rtp, tp);
+		break;
+	default:
+		/* Prior call to rtprio_preamble() makes it impossible. */
+		__assert_unreachable();
+	}
+
+	return (error);
+}
+
 int
-kern_rtprio(struct thread *td, int function, pid_t pid, struct rtprio *rtp)
+kern_rtprio_by_id(struct thread *td, int function, pid_t pid,
+    struct rtprio *rtp)
 {
 	struct proc *tp;
-	int error;
+	int flags, error;
 
 	error = rtprio_preamble(td, function, rtp);
 	if (error != 0)
 		return (error);
 
 	if (pid == 0) {
+		flags = RP_THREAD_ONLY;
 		tp = td->td_proc;
+		/*
+		 * Set/return only the calling thread's priority when no PID is
+		 * explicitly specified.  The case of a process specifying its
+		 * own PID is (intentionally) treated differently.
+		 */
 		PROC_LOCK(tp);
 	} else {
+		flags = 0;
 		tp = pfind(pid);
 		if (tp == NULL)
 			return (ESRCH);
 	}
 
-	switch (function) {
-	case RTP_LOOKUP:
-		/*
-		 * Return OUR priority if no pid specified,
-		 * or if one is, report the highest priority
-		 * in the process.  There isn't much more you can do as
-		 * there is only room to return a single priority.
-		 * Note: specifying our own pid is not the same
-		 * as leaving it zero.
-		 */
-		error = (pid == 0) ? rtp_get_thread(td, td, rtp) :
-		    rtp_get_proc(td, tp, rtp);
-		break;
-	case RTP_SET:
-		/*
-		 * If we are setting our own priority, set just our
-		 * thread but if we are doing another process,
-		 * do all the threads on that process. If we
-		 * specify our own pid we do the latter.
-		 */
-		error = (pid == 0) ? rtp_set_thread(td, rtp, td) :
-		    rtp_set_proc(td, rtp, tp);
-		break;
-	default:
-		__assert_unreachable();
-	}
+	error = rtprio_postamble(td, function, flags, tp, rtp);
 
 	PROC_UNLOCK(tp);
+	return (error);
+}
+
+int
+kern_rtprio(struct thread *td, int function, struct proc *tp,
+    struct rtprio *rtp)
+{
+	int error;
+
+	/*
+	 * We require it for the whole function as a means to ensure the process
+	 * is not going to vanish in the meantime.
+	 */
+	PROC_LOCK_ASSERT(tp, MA_OWNED);
+
+	error = rtprio_preamble(td, function, rtp);
+	if (error == 0)
+		error = rtprio_postamble(td, function, 0, tp, rtp);
+
 	return (error);
 }
 
@@ -543,7 +585,7 @@ sys_rtprio(struct thread *td, struct rtprio_args *uap)
 			return (error);
 	}
 
-	error = kern_rtprio(td, uap->function, uap->pid, &rtp);
+	error = kern_rtprio_by_id(td, uap->function, uap->pid, &rtp);
 	if (error != 0)
 		return (error);
 
@@ -553,8 +595,35 @@ sys_rtprio(struct thread *td, struct rtprio_args *uap)
 	return (error);
 }
 
+/*
+ * Perform target-thread-dependent checks and set priority.
+ */
+static int
+rtprio_thread_postamble(struct thread *td, int function,
+    struct thread *ttd, struct proc *tp, struct rtprio *rtp)
+{
+	int error;
+
+	PROC_LOCK_ASSERT(tp, MA_OWNED);
+	MPASS(tp == ttd->td_proc);
+
+	switch (function) {
+	case RTP_LOOKUP:
+		error = rtp_get_thread(td, ttd, rtp);
+		break;
+	case RTP_SET:
+		error = rtp_set_thread(td, rtp, ttd);
+		break;
+	default:
+		/* Prior call to rtprio_preamble() makes it impossible. */
+		__assert_unreachable();
+	}
+
+	return (error);
+}
+
 int
-kern_rtprio_thread(struct thread *td, int function, lwpid_t lwpid,
+kern_rtprio_thread_by_id(struct thread *td, int function, lwpid_t lwpid,
     struct rtprio *rtp)
 {
 	struct proc *tp;
@@ -576,20 +645,30 @@ kern_rtprio_thread(struct thread *td, int function, lwpid_t lwpid,
 		tp = ttd->td_proc;
 	}
 
-	switch (function) {
-	case RTP_LOOKUP:
-		error = rtp_get_thread(td, ttd, rtp);
-		break;
-	case RTP_SET:
-		error = rtp_set_thread(td, rtp, ttd);
-		break;
-	default:
-		/* Impossible case because of rtprio_preamble() above. */
-		__assert_unreachable();
-	}
+	error = rtprio_thread_postamble(td, function, ttd, tp, rtp);
 
 	PROC_UNLOCK(tp);
 	return (error);
+}
+
+int
+kern_rtprio_thread(struct thread *td, int function, struct thread *target_td,
+    struct rtprio *rtp)
+{
+	struct proc *const tp = target_td->td_proc;
+	int error;
+
+	/*
+	 * We require it for the whole function as a means to ensure the thread
+	 * is not going to vanish in the meantime.
+	 */
+	PROC_LOCK_ASSERT(tp, MA_OWNED);
+
+	error = rtprio_preamble(td, function, rtp);
+	if (error != 0)
+		return (error);
+
+	return (rtprio_thread_postamble(td, function, target_td, tp, rtp));
 }
 
 /*
@@ -614,7 +693,7 @@ sys_rtprio_thread(struct thread *td, struct rtprio_thread_args *uap)
 			return (error);
 	}
 
-	error = kern_rtprio_thread(td, uap->function, uap->lwpid, &rtp);
+	error = kern_rtprio_thread_by_id(td, uap->function, uap->lwpid, &rtp);
 	if (error != 0)
 		return (error);
 
