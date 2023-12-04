@@ -65,6 +65,9 @@
 #include <sys/_types.h>
 
 #ifdef _KERNEL
+
+#include <sys/proc.h>		/* For inline functions. */
+
 /*
  * General scheduling info.
  *
