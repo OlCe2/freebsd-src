@@ -649,4 +649,6 @@ struct sysent sysent[] = {
 	{ .sy_narg = AS(timerfd_gettime_args), .sy_call = (sy_call_t *)sys_timerfd_gettime, .sy_auevent = AUE_TIMERFD, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 586 = timerfd_gettime */
 	{ .sy_narg = AS(timerfd_settime_args), .sy_call = (sy_call_t *)sys_timerfd_settime, .sy_auevent = AUE_TIMERFD, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 587 = timerfd_settime */
 	{ .sy_narg = AS(kcmp_args), .sy_call = (sy_call_t *)sys_kcmp, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 588 = kcmp */
+	{ .sy_narg = AS(thr_sched_set_args), .sy_call = (sy_call_t *)sys_thr_sched_set, .sy_auevent = AUE_SCHED_SETSCHEDULER, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 589 = thr_sched_set */
+	{ .sy_narg = AS(thr_sched_get_args), .sy_call = (sy_call_t *)sys_thr_sched_get, .sy_auevent = AUE_SCHED_GETSCHEDULER, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 590 = thr_sched_get */
 };

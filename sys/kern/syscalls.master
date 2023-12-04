@@ -3333,5 +3333,21 @@
 		    uintptr_t idx2
 		);
 	}
+589	AUE_SCHED_SETSCHEDULER	STD|CAPENABLED {
+		int thr_sched_set(
+		    uint32_t flags,
+		    lwpid_t lwpid,
+		    _In_reads_bytes_(len) void *attr,
+		    size_t len
+		);
+	}
+590	AUE_SCHED_GETSCHEDULER	STD|CAPENABLED {
+		int thr_sched_get(
+		    uint32_t flags,
+		    lwpid_t lwpid,
+		    _Out_writes_bytes_(len) void *attr,
+		    size_t len
+		);
+	}
 
 ; vim: syntax=off

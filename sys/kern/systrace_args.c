@@ -3455,6 +3455,26 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		*n_args = 5;
 		break;
 	}
+	/* thr_sched_set */
+	case 589: {
+		struct thr_sched_set_args *p = params;
+		uarg[a++] = p->flags; /* uint32_t */
+		iarg[a++] = p->lwpid; /* lwpid_t */
+		uarg[a++] = (intptr_t)p->attr; /* void * */
+		uarg[a++] = p->len; /* size_t */
+		*n_args = 4;
+		break;
+	}
+	/* thr_sched_get */
+	case 590: {
+		struct thr_sched_get_args *p = params;
+		uarg[a++] = p->flags; /* uint32_t */
+		iarg[a++] = p->lwpid; /* lwpid_t */
+		uarg[a++] = (intptr_t)p->attr; /* void * */
+		uarg[a++] = p->len; /* size_t */
+		*n_args = 4;
+		break;
+	}
 	default:
 		*n_args = 0;
 		break;
@@ -9245,6 +9265,44 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			break;
 		};
 		break;
+	/* thr_sched_set */
+	case 589:
+		switch (ndx) {
+		case 0:
+			p = "uint32_t";
+			break;
+		case 1:
+			p = "lwpid_t";
+			break;
+		case 2:
+			p = "userland void *";
+			break;
+		case 3:
+			p = "size_t";
+			break;
+		default:
+			break;
+		};
+		break;
+	/* thr_sched_get */
+	case 590:
+		switch (ndx) {
+		case 0:
+			p = "uint32_t";
+			break;
+		case 1:
+			p = "lwpid_t";
+			break;
+		case 2:
+			p = "userland void *";
+			break;
+		case 3:
+			p = "size_t";
+			break;
+		default:
+			break;
+		};
+		break;
 	default:
 		break;
 	};
@@ -11215,6 +11273,16 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* kcmp */
 	case 588:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* thr_sched_set */
+	case 589:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* thr_sched_get */
+	case 590:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;

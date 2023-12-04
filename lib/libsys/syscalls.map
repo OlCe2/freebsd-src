@@ -801,4 +801,8 @@ FBSDprivate_1.0 {
 	__sys_timerfd_settime;
 	_kcmp;
 	__sys_kcmp;
+	_thr_sched_set;
+	__sys_thr_sched_set;
+	_thr_sched_get;
+	__sys_thr_sched_get;
 };
