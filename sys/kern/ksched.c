@@ -39,15 +39,17 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
-#include <sys/lock.h>
-#include <sys/sysctl.h>
 #include <sys/kernel.h>
+#include <sys/lock.h>
 #include <sys/mutex.h>
-#include <sys/proc.h>
 #include <sys/posix4.h>
+#include <sys/proc.h>
 #include <sys/resource.h>
 #include <sys/rtprio.h>
 #include <sys/sched.h>
+#include <sys/syscallsubr.h>
+#include <sys/sysctl.h>
+
 
 FEATURE(kposix_priority_scheduling, "POSIX P1003.1B realtime extensions");
 
@@ -86,28 +88,12 @@ ksched_detach(struct ksched *ks)
 static __inline int
 getscheduler(struct ksched *ksched, struct thread *td, int *policy)
 {
-	struct rtprio rtp;
+	struct sched_attr sched_attr;
 	int error;
 
-	error = rtp_get_thread(curthread, td, &rtp);
-	if (error != 0)
-		return (error);
-
-	switch (rtp.type) {
-	case RTP_PRIO_FIFO:
-		*policy = SCHED_FIFO;
-		break;
-	case RTP_PRIO_REALTIME:
-		*policy = SCHED_RR;
-		break;
-	case RTP_PRIO_NORMAL:
-		*policy = SCHED_OTHER;
-		break;
-	default:
-		error = EOVERFLOW;
-		break;
-	}
-
+	error = kern_thr_sched_get(curthread, td, &sched_attr);
+	if (error == 0)
+		*policy = sched_attr.policy;
 	return (error);
 }
 
@@ -127,25 +113,12 @@ int
 ksched_getparam(struct ksched *ksched, struct thread *td,
     struct sched_param *param)
 {
-	struct rtprio rtp;
+	struct sched_attr sched_attr;
 	int error;
 
-	if ((error = rtp_get_thread(curthread, td, &rtp)) != 0)
-		return (error);
-
-	switch (rtp.type) {
-	case RTP_PRIO_FIFO:
-	case RTP_PRIO_REALTIME:
-		param->sched_priority = rtprio_to_p1bprio(rtp.prio);
-		break;
-	case RTP_PRIO_NORMAL:
-		param->sched_priority = tsprio_to_p1bprio(rtp.prio);
-		break;
-	default:
-		error = EOVERFLOW;
-		break;
-	}
-
+	error = kern_thr_sched_get(curthread, td, &sched_attr);
+	if (error == 0)
+		param->sched_priority = sched_attr.priority;
 	return (error);
 }
 
@@ -160,29 +133,18 @@ int
 ksched_setscheduler(struct ksched *ksched, struct thread *td, int policy,
     const struct sched_param *param)
 {
-	struct rtprio rtp;
-	int error = EINVAL;
+	struct sched_attr sched_attr;
 
-	switch (policy) {
-	case SCHED_RR:
-	case SCHED_FIFO:
-		if (P1B_PRIO_IS_IN_RT_RANGE(param->sched_priority)) {
-			rtp.prio = p1bprio_to_rtprio(param->sched_priority);
-			rtp.type = (policy == SCHED_FIFO) ? RTP_PRIO_FIFO :
-			    RTP_PRIO_REALTIME;
-			error = rtp_set_thread(curthread, &rtp, td);
-		}
-		break;
-	case SCHED_OTHER:
-		if (P1B_PRIO_IS_IN_TS_RANGE(param->sched_priority)) {
-			rtp.type = RTP_PRIO_NORMAL;
-			rtp.prio = p1bprio_to_tsprio(param->sched_priority);
-			error = rtp_set_thread(curthread, &rtp, td);
-		}
-		break;
-	}
+	sched_attr.policy = policy;
+	if (sched_attr.policy != policy)
+		/* Wraparound. */
+		return (EINVAL);
+	sched_attr.priority = param->sched_priority;
+	if (sched_attr.priority != param->sched_priority)
+		/* Wraparound. */
+		return (EINVAL);
 
-	return (error);
+	return (kern_thr_sched_set(curthread, td, &sched_attr));
 }
 
 int

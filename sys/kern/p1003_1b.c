@@ -218,19 +218,9 @@ int
 kern_sched_setscheduler(struct thread *td, struct thread *targettd,
     int policy, struct sched_param *param)
 {
-	struct proc *targetp;
-	int error;
+	PROC_LOCK_ASSERT(targettd->td_proc, MA_OWNED);
 
-	targetp = targettd->td_proc;
-	PROC_LOCK_ASSERT(targetp, MA_OWNED);
-
-	/* Only privileged users are allowed to set a scheduler policy. */
-	error = priv_check(td, PRIV_SCHED_SETPOLICY);
-	if (error)
-		return (error);
-
-	error = ksched_setscheduler(ksched, targettd, policy, param);
-	return (error);
+	return (ksched_setscheduler(ksched, targettd, policy, param));
 }
 
 int
