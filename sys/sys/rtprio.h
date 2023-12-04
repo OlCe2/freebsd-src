@@ -202,6 +202,9 @@ int	rtp_is_valid(const struct rtprio *);
 struct thread;
 int	rtp_can_set_prio(struct thread *, const struct rtprio *);
 int	rtp_set_check(struct thread *, const struct rtprio *);
+struct sched_attr;
+int	posix_sched_to_rtp(const struct sched_attr *, struct rtprio *);
+int	rtp_to_posix_sched(const struct rtprio *, struct sched_attr *);
 int	rtp_set_thread(struct thread *_curthread, const struct rtprio *,
 	    struct thread *_target_td);
 int	rtp_set_proc(struct thread *_curthread, const struct rtprio *,

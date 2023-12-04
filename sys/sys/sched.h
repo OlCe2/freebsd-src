@@ -232,6 +232,22 @@ void schedinit(void);
  * Fixup scheduler state for secondary APs
  */
 void schedinit_ap(void);
+
+/*
+ * Kernel structure holding all POSIX scheduling attributes.
+ *
+ * It is used internally to transiently represent these attributes, but never
+ * stored long term, so its size is not much of a concern.
+ *
+ * Policy and priority are 16-bit wide only, both to match 'struct rtprio' and
+ * because this size should be more than enough for the foreseeable future
+ * (famous words).  So far, only 8-bit have ever been used internally for these.
+ */
+struct sched_attr {
+	__uint16_t	policy;
+	__uint16_t	priority;
+};
+
 #endif /* _KERNEL */
 
 /* POSIX 1003.1b Process Scheduling */

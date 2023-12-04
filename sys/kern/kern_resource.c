@@ -703,6 +703,88 @@ sys_rtprio_thread(struct thread *td, struct rtprio_thread_args *uap)
 	return (error);
 }
 
+static int
+check_convert_p1bprio_to_rt_range(u_short rtp_type, uint16_t priority,
+    struct rtprio *rtp)
+{
+	if (P1B_PRIO_IS_IN_RT_RANGE(priority)) {
+		rtp->type = rtp_type;
+		rtp->prio = p1bprio_to_rtprio(priority);
+		return (0);
+	}
+	return (EINVAL);
+}
+
+/*
+ * Convert external POSIX scheduling attributes to an internal RT specification.
+ */
+int
+posix_sched_to_rtp(const struct sched_attr *const sched_attr,
+    struct rtprio *const rtp)
+{
+	int error;
+
+	switch (sched_attr->policy) {
+	case SCHED_FIFO:
+		error = check_convert_p1bprio_to_rt_range(RTP_PRIO_FIFO,
+		    sched_attr->priority, rtp);
+		break;
+	case SCHED_RR:
+		error = check_convert_p1bprio_to_rt_range(RTP_PRIO_REALTIME,
+		    sched_attr->priority, rtp);
+		break;
+	case SCHED_OTHER:
+		rtp->type = RTP_PRIO_NORMAL;
+		rtp->prio = 0;
+		error = 0;
+		break;
+	default:
+		error = EINVAL;
+		break;
+	}
+
+	KASSERT(error != 0 || rtp_is_valid(rtp),
+	    ("%s: Produced an invalid 'struct rtp'", __func__));
+	return (error);
+}
+
+static int
+check_convert_rt_range_to_p1bprio(uint16_t policy, u_short prio,
+    struct sched_attr *sched_attr)
+{
+	if (RTP_PRIO_IS_IN_RANGE(prio)) {
+		sched_attr->policy = policy;
+		sched_attr->priority = rtprio_to_p1bprio(prio);
+		return (0);
+	}
+	/* This should never happen, since RT data comes from the kernel. */
+	return (EINVAL);
+}
+
+/*
+ * Convert a RT specification to a POSIX.1b one to export to consumers.
+ */
+int
+rtp_to_posix_sched(const struct rtprio *const rtp,
+    struct sched_attr *const sched_attr)
+{
+	switch (rtp->type) {
+	case RTP_PRIO_FIFO:
+		return (check_convert_rt_range_to_p1bprio(SCHED_FIFO,
+		    rtp->prio, sched_attr));
+	case RTP_PRIO_REALTIME:
+		return (check_convert_rt_range_to_p1bprio(SCHED_RR,
+		    rtp->prio, sched_attr));
+	case RTP_PRIO_NORMAL:
+		sched_attr->policy = SCHED_OTHER;
+		sched_attr->priority = 0;
+		return (0);
+	}
+
+	return (EOVERFLOW);
+}
+
+
 /*
  * Check correspondance of RT priority types assumed by conversion functions.
  */
