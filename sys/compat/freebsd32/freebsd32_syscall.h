@@ -507,4 +507,6 @@
 #define	FREEBSD32_SYS_freebsd32_timerfd_gettime	586
 #define	FREEBSD32_SYS_freebsd32_timerfd_settime	587
 #define	FREEBSD32_SYS_kcmp	588
-#define	FREEBSD32_SYS_MAXSYSCALL	589
+#define	FREEBSD32_SYS_thr_sched_set	589
+#define	FREEBSD32_SYS_thr_sched_get	590
+#define	FREEBSD32_SYS_MAXSYSCALL	591

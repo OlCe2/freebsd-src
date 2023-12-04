@@ -62,6 +62,8 @@
 #ifndef _SCHED_H_
 #define	_SCHED_H_
 
+#include <sys/_types.h>
+
 #ifdef _KERNEL
 /*
  * General scheduling info.
@@ -239,6 +241,10 @@ void schedinit_ap(void);
  * It is used internally to transiently represent these attributes, but never
  * stored long term, so its size is not much of a concern.
  *
+ * Each time this internal kernel structure is changed, the conversion of
+ * structures done by the thr_sched_set() and thr_sched_get() system calls must
+ * be revised (compile-time asserts will prompt you to).
+ *
  * Policy and priority are 16-bit wide only, both to match 'struct rtprio' and
  * because this size should be more than enough for the foreseeable future
  * (famous words).  So far, only 8-bit have ever been used internally for these.
@@ -250,26 +256,55 @@ struct sched_attr {
 
 #endif /* _KERNEL */
 
-/* POSIX 1003.1b Process Scheduling */
+#ifdef __BSD_VISIBLE
+/*
+ * Structure to transfer POSIX scheduling attributes from/to the kernel.
+ *
+ * This is the structure to use when directly going through the thr_sched_set()
+ * and thr_sched_get() system calls.  Its version number is 1.
+ *
+ * If/when these system calls need to evolve, new versions of the structure will
+ * be created and will need to be used instead (the calls themselves support
+ * flags and in particular a structure version number).
+ */
+struct sched_attr_v1 {
+	__uint16_t	policy;
+	__uint16_t	priority;
+};
+#endif
 
 /*
- * POSIX scheduling policies
+ * POSIX(.1b) scheduling policies.
+ *
+ * These are scheduling policies obeying the general POSIX rules.  Extensions
+ * are marked as such.
+ *
+ * All the values below are accepted and returned by the POSIX interface,
+ * including sched_setscheduler(), sched_getscheduler() and pthread functions to
+ * manipulate the scheduling attributes of a thread or those held by a thread
+ * attributes objet.
+ *
+ * They are also all accepted and returned by system calls thr_sched_set() and
+ * thr_sched_get() (with version 1).
  */
 #define SCHED_FIFO      1
 #define SCHED_OTHER     2
 #define SCHED_RR        3
 
 struct sched_param {
-        int     sched_priority;
+	/*
+	 * Type and name defined by POSIX.  For forward ABI compatibility, this
+	 * field must remain first in this structure.
+	 */
+	int	sched_priority;
 };
 
+
+#ifndef _KERNEL
 /*
  * POSIX scheduling declarations for userland.
  */
-#ifndef _KERNEL
-#include <sys/cdefs.h>
 #include <sys/_timespec.h>
-#include <sys/_types.h>
 
 #ifndef _PID_T_DECLARED
 typedef __pid_t         pid_t;
@@ -287,5 +322,5 @@ int     sched_setscheduler(pid_t, int, const struct sched_param *);
 int     sched_yield(void);
 __END_DECLS
 
-#endif
+#endif /* !_KERNEL */
 #endif /* !_SCHED_H_ */

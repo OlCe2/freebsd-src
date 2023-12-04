@@ -91,6 +91,38 @@ suword_lwpid(void *addr, lwpid_t lwpid)
 #endif
 
 /*
+ * The following assertion ensures that the code of the two conversion functions
+ * just afterwards is correct (provided 'struct sched_attr_v1' never changes,
+ * which it MUST not; that's the whole point of versioning).
+ */
+_Static_assert(sizeof(struct sched_attr) == sizeof(struct sched_attr_v1) &&
+    sizeof(((struct sched_attr *)NULL)->policy) ==
+    sizeof(((struct sched_attr_v1 *)NULL)->policy) &&
+    sizeof(((struct sched_attr *)NULL)->priority) ==
+    sizeof(((struct sched_attr_v1 *)NULL)->priority),
+    "'struct sched_attr' has been changed, please revise the "
+    "conversion functions in this file and in 'kern_resource.c'");
+
+static inline void
+_thr_sched_attr_from_v1(const struct sched_attr_v1 *const user,
+    struct sched_attr *const kernel)
+{
+
+	kernel->policy = user->policy;
+	kernel->priority = user->priority;
+}
+
+static inline void
+_thr_sched_attr_to_v1(const struct sched_attr *const kernel,
+    struct sched_attr_v1 *const user)
+{
+
+	user->policy = kernel->policy;
+	user->priority = kernel->priority;
+}
+
+
+/*
  * System call interface.
  */
 
@@ -626,4 +658,119 @@ kern_thr_alloc(struct proc *p, int pages, struct thread **ntd)
 		return (ENOMEM);
 
 	return (0);
+}
+
+int
+kern_thr_sched_set_by_id(struct thread *td, lwpid_t lwpid,
+    const struct sched_attr *attr)
+{
+	struct rtprio rtp;
+	int error;
+
+	error = posix_sched_to_rtp(attr, &rtp);
+	if (error != 0)
+		return (error);
+
+	return (kern_rtprio_thread_by_id(td, RTP_SET, lwpid, &rtp));
+}
+
+int
+kern_thr_sched_set(struct thread *td, struct thread *target_td,
+    const struct sched_attr *attr)
+{
+	struct rtprio rtp;
+	int error;
+
+	error = posix_sched_to_rtp(attr, &rtp);
+	if (error != 0)
+		return (error);
+
+	return (kern_rtprio_thread(td, RTP_SET, target_td, &rtp));
+}
+
+#ifndef _SYS_SYSPROTO_H_
+struct thr_sched_set_args {
+	uint32_t flags,
+	lwpid_t lwpid,
+	void *attr,
+	size_t len
+};
+#endif
+int
+sys_thr_sched_set(struct thread *td, struct thr_sched_set_args *args)
+{
+	struct sched_attr k_attr;
+	struct sched_attr_v1 u_attr;
+	int error;
+
+	if (THR_SCHED_UNDEFINED_FLAGS(args->flags) ||
+	    THR_SCHED_FLAGS_TO_VERSION(args->flags) != 1 ||
+	    args->len != sizeof(u_attr))
+		return (EINVAL);
+
+	error = copyin(args->attr, &u_attr, sizeof(u_attr));
+	if (error != 0)
+		return (error);
+
+	_thr_sched_attr_from_v1(&u_attr, &k_attr);
+
+	return (kern_thr_sched_set_by_id(td, args->lwpid, &k_attr));
+}
+
+int
+kern_thr_sched_get_by_id(struct thread *td, lwpid_t lwpid,
+    struct sched_attr *attr)
+{
+	struct rtprio rtp;
+	int error;
+
+	error = kern_rtprio_thread_by_id(td, RTP_LOOKUP, lwpid, &rtp);
+	if (error != 0)
+		return (error);
+
+	return (rtp_to_posix_sched(&rtp, attr));
+}
+
+int
+kern_thr_sched_get(struct thread *td, struct thread *target_td,
+    struct sched_attr *attr)
+{
+	struct rtprio rtp;
+	int error;
+
+	error = kern_rtprio_thread(td, RTP_LOOKUP, target_td, &rtp);
+	if (error != 0)
+		return (error);
+
+	return (rtp_to_posix_sched(&rtp, attr));
+}
+
+#ifndef _SYS_SYSPROTO_H_
+struct thr_sched_get_args {
+	uint32_t flags,
+	lwpid_t lwpid,
+	void *attr,
+	size_t len
+};
+#endif
+int
+sys_thr_sched_get(struct thread *td, struct thr_sched_get_args *args)
+{
+	struct sched_attr k_attr;
+	struct sched_attr_v1 u_attr;
+	int error;
+
+	if (THR_SCHED_UNDEFINED_FLAGS(args->flags) ||
+	    THR_SCHED_FLAGS_TO_VERSION(args->flags) != 1 ||
+	    args->len != sizeof(u_attr))
+		return (EINVAL);
+
+	error = kern_thr_sched_get_by_id(td, args->lwpid, &k_attr);
+	if (error != 0)
+		return (error);
+
+	_thr_sched_attr_to_v1(&k_attr, &u_attr);
+
+	error = copyout(&u_attr, args->attr, sizeof(u_attr));
+	return (error);
 }

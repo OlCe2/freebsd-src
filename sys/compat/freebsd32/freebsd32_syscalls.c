@@ -594,4 +594,6 @@ const char *freebsd32_syscallnames[] = {
 	"freebsd32_timerfd_gettime",			/* 586 = freebsd32_timerfd_gettime */
 	"freebsd32_timerfd_settime",			/* 587 = freebsd32_timerfd_settime */
 	"kcmp",			/* 588 = kcmp */
+	"thr_sched_set",			/* 589 = thr_sched_set */
+	"thr_sched_get",			/* 590 = thr_sched_get */
 };

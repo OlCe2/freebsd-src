@@ -525,4 +525,6 @@
 #define	SYS_timerfd_gettime	586
 #define	SYS_timerfd_settime	587
 #define	SYS_kcmp	588
-#define	SYS_MAXSYSCALL	589
+#define	SYS_thr_sched_set	589
+#define	SYS_thr_sched_get	590
+#define	SYS_MAXSYSCALL	591

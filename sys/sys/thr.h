@@ -60,6 +60,12 @@ struct thr_param {
 	void		*spare[3];	/* TODO: cpu affinity mask etc. */
 };
 
+#define THR_SCHED_FLAGS_TO_VERSION(f)	((f) & 0xFF)
+#define THR_SCHED_FLAGS_FROM_VERSION(v)	((v) & 0xFF)
+
+#define THR_SCHED_DEFINED_FLAGS		0xFF
+#define THR_SCHED_UNDEFINED_FLAGS(f)	((f) & ~THR_SCHED_DEFINED_FLAGS)
+
 #ifndef _KERNEL
 
 #include <sys/ucontext.h>
@@ -67,6 +73,16 @@ struct thr_param {
 #ifndef _PID_T_DECLARED
 typedef __pid_t		pid_t;
 #define _PID_T_DECLARED
+#endif
+
+#ifndef _LWPID_T_DECLARED
+typedef __lwpid_t	lwpid_t;
+#define _LWPID_T_DECLARED
+#endif
+
+#ifndef _UINT32_T_DECLARED
+typedef __uint32_t	uint32_t;
+#define _UINT32_T_DECLARED
 #endif
 
 __BEGIN_DECLS
@@ -79,6 +95,13 @@ int thr_kill2(pid_t pid, long id, int sig);
 int thr_suspend(const struct timespec *timeout);
 int thr_wake(long id);
 int thr_set_name(long id, const char *name);
+/*
+ * For the following two system calls, '_attr' must be some version of
+ * 'struct sched_attr', see the THR_SCHED_FLAGS_* macros above and
+ * <sys/sched.h>.
+ */
+int thr_sched_set(uint32_t _flags, lwpid_t, void *_attr, size_t _len);
+int thr_sched_get(uint32_t _flags, lwpid_t, void *_attr, size_t _len);
 __END_DECLS
 #endif /* !_KERNEL */
 

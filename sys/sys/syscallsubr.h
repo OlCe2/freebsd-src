@@ -54,6 +54,7 @@ struct mq_attr;
 struct msghdr;
 struct msqid_ds;
 struct pollfd;
+struct sched_attr;
 struct ogetdirentries_args;
 struct rlimit;
 struct rtprio;
@@ -382,6 +383,14 @@ int	kern_thr_alloc(struct proc *, int pages, struct thread **);
 int	kern_thr_exit(struct thread *td);
 int	kern_thr_new_with_sub_params_fetch(struct thread *td,
 	    struct thr_param *param);
+int	kern_thr_sched_set_by_id(struct thread *, lwpid_t,
+	    const struct sched_attr *);
+int	kern_thr_sched_set(struct thread *, struct thread *_target_td,
+	    const struct sched_attr *);
+int	kern_thr_sched_get_by_id(struct thread *, lwpid_t,
+	    struct sched_attr *);
+int	kern_thr_sched_get(struct thread *, struct thread *_target_td,
+	    struct sched_attr *);
 int	kern_thr_suspend(struct thread *td, struct timespec *tsp);
 int	kern_timerfd_create(struct thread *td, int clockid, int flags);
 int	kern_timerfd_gettime(struct thread *td, int fd,

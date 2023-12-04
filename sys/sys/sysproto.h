@@ -1877,6 +1877,18 @@ struct kcmp_args {
 	char idx1_l_[PADL_(uintptr_t)]; uintptr_t idx1; char idx1_r_[PADR_(uintptr_t)];
 	char idx2_l_[PADL_(uintptr_t)]; uintptr_t idx2; char idx2_r_[PADR_(uintptr_t)];
 };
+struct thr_sched_set_args {
+	char flags_l_[PADL_(uint32_t)]; uint32_t flags; char flags_r_[PADR_(uint32_t)];
+	char lwpid_l_[PADL_(lwpid_t)]; lwpid_t lwpid; char lwpid_r_[PADR_(lwpid_t)];
+	char attr_l_[PADL_(void *)]; void * attr; char attr_r_[PADR_(void *)];
+	char len_l_[PADL_(size_t)]; size_t len; char len_r_[PADR_(size_t)];
+};
+struct thr_sched_get_args {
+	char flags_l_[PADL_(uint32_t)]; uint32_t flags; char flags_r_[PADR_(uint32_t)];
+	char lwpid_l_[PADL_(lwpid_t)]; lwpid_t lwpid; char lwpid_r_[PADR_(lwpid_t)];
+	char attr_l_[PADL_(void *)]; void * attr; char attr_r_[PADR_(void *)];
+	char len_l_[PADL_(size_t)]; size_t len; char len_r_[PADR_(size_t)];
+};
 int	sys_exit(struct thread *, struct exit_args *);
 int	sys_fork(struct thread *, struct fork_args *);
 int	sys_read(struct thread *, struct read_args *);
@@ -2276,6 +2288,8 @@ int	sys_timerfd_create(struct thread *, struct timerfd_create_args *);
 int	sys_timerfd_gettime(struct thread *, struct timerfd_gettime_args *);
 int	sys_timerfd_settime(struct thread *, struct timerfd_settime_args *);
 int	sys_kcmp(struct thread *, struct kcmp_args *);
+int	sys_thr_sched_set(struct thread *, struct thr_sched_set_args *);
+int	sys_thr_sched_get(struct thread *, struct thr_sched_get_args *);
 
 #ifdef COMPAT_43
 
@@ -3255,6 +3269,8 @@ int	freebsd13_swapoff(struct thread *, struct freebsd13_swapoff_args *);
 #define	SYS_AUE_timerfd_gettime	AUE_TIMERFD
 #define	SYS_AUE_timerfd_settime	AUE_TIMERFD
 #define	SYS_AUE_kcmp	AUE_NULL
+#define	SYS_AUE_thr_sched_set	AUE_SCHED_SETSCHEDULER
+#define	SYS_AUE_thr_sched_get	AUE_SCHED_GETSCHEDULER
 
 #undef PAD_
 #undef PADL_
