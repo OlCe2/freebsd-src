@@ -187,7 +187,7 @@
 #define	PRIV_SCHED_SETPRIORITY	201	/* Can set lower nice value for proc. */
 #define	PRIV_SCHED_RTPRIO	202	/* Can set real time scheduling. */
 #define	PRIV_SCHED_SETPOLICY	203	/* Can set scheduler policy. */
-#define	PRIV_SCHED_SET		204	/* Can set thread scheduler. */
+#define	_PRIV_SCHED_SET		204	/* Removed. */
 #define	PRIV_SCHED_SETPARAM	205	/* Can set thread scheduler params. */
 #define	PRIV_SCHED_CPUSET	206	/* Can manipulate cpusets. */
 #define	PRIV_SCHED_CPUSET_INTR	207	/* Can adjust IRQ to CPU binding. */
