@@ -213,6 +213,8 @@ int	rtp_get_thread(struct thread *_curthread, struct thread *_target_td,
 	    struct rtprio *);
 int	rtp_get_proc(struct thread *_curthread, struct proc *_target_proc,
 	    struct rtprio *);
+struct thread *rtprio_get_thread_by_id(struct thread *_default, lwpid_t);
+
 
 #else /* !_KERNEL */
 
