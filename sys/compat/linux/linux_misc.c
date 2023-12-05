@@ -2717,33 +2717,65 @@ linux_execve(struct thread *td, struct linux_execve_args *args)
 	return (error);
 }
 
-#define	LINUX_PRIO_DIVIDER	RTP_PRIO_MAX / LINUX_IOPRIO_MAX
+static inline int
+rtprio_to_linux_ioprio(int prio)
+{
+
+	KASSERT(RTP_PRIO_MIN <= prio && prio <= RTP_PRIO_MAX,
+	    ("Invalid input rtprio %d.", prio));
+	/*
+	 * Round down in order to produce a non-maximal value as soon as the
+	 * input value is not maximal.
+	 */
+	return (LINUX_IOPRIO_MIN + (prio - RTP_PRIO_MIN) *
+	    (LINUX_IOPRIO_MAX - LINUX_IOPRIO_MIN) /
+	    (RTP_PRIO_MAX - RTP_PRIO_MIN));
+}
+
+static inline int
+linux_ioprio_to_rtprio(int ioprio)
+{
+
+	KASSERT(LINUX_IOPRIO_MIN <= ioprio && ioprio <= LINUX_IOPRIO_MAX,
+	    ("Invalid input Linux ioprio %d.", ioprio));
+	/*
+	 * Round up as the inverse operation rounds down, in order to avoid
+	 * convergence of priority to one end of the ranges in case of repeated
+	 * back and forth conversions.
+	 */
+	return (RTP_PRIO_MIN + howmany((ioprio - LINUX_IOPRIO_MIN) *
+	    (RTP_PRIO_MAX - RTP_PRIO_MIN),
+	    LINUX_IOPRIO_MAX - LINUX_IOPRIO_MIN));
+}
 
 static int
-linux_rtprio2ioprio(struct rtprio *rtp)
+linux_rtprio2ioprio(struct rtprio *rtp, int *ioprio)
 {
-	int ioprio, prio;
 
 	switch (rtp->type) {
 	case RTP_PRIO_IDLE:
-		prio = RTP_PRIO_MIN;
-		ioprio = LINUX_IOPRIO_PRIO(LINUX_IOPRIO_CLASS_IDLE, prio);
+		/* Linux doesn't support a value for this class. */
+		*ioprio = LINUX_IOPRIO_PRIO(LINUX_IOPRIO_CLASS_IDLE, 0);
 		break;
 	case RTP_PRIO_NORMAL:
-		prio = rtp->prio / LINUX_PRIO_DIVIDER;
-		ioprio = LINUX_IOPRIO_PRIO(LINUX_IOPRIO_CLASS_BE, prio);
+		/*
+		 * Wrong: Normal type priority values were never the same as
+		 * that of the FIFO or realtime types.  To be fixed after
+		 * changing normal prio semantics.
+		 */
+		*ioprio = LINUX_IOPRIO_PRIO(LINUX_IOPRIO_CLASS_BE,
+		    rtprio_to_linux_ioprio(rtp->prio));
 		break;
 	case RTP_PRIO_FIFO:
 	case RTP_PRIO_REALTIME:
-		prio = rtp->prio / LINUX_PRIO_DIVIDER;
-		ioprio = LINUX_IOPRIO_PRIO(LINUX_IOPRIO_CLASS_RT, prio);
+		*ioprio = LINUX_IOPRIO_PRIO(LINUX_IOPRIO_CLASS_RT,
+		    rtprio_to_linux_ioprio(rtp->prio));
 		break;
 	default:
-		prio = RTP_PRIO_MIN;
-		ioprio = LINUX_IOPRIO_PRIO(LINUX_IOPRIO_CLASS_NONE, prio);
-		break;
+		return (EINVAL);
 	}
-	return (ioprio);
+
+	return (0);
 }
 
 static int
@@ -2752,16 +2784,26 @@ linux_ioprio2rtprio(int ioprio, struct rtprio *rtp)
 
 	switch (LINUX_IOPRIO_PRIO_CLASS(ioprio)) {
 	case LINUX_IOPRIO_CLASS_IDLE:
-		rtp->prio = RTP_PRIO_MIN;
 		rtp->type = RTP_PRIO_IDLE;
+		/* Somewhat arbitrary, but at least gives administrators or
+		 * power users the choice to set native idle processes with more
+		 * or less priority than Linux's idle processes. */
+		rtp->prio = (RTP_PRIO_MIN + RTP_PRIO_MAX) / 2;
 		break;
 	case LINUX_IOPRIO_CLASS_BE:
-		rtp->prio = LINUX_IOPRIO_PRIO_DATA(ioprio) * LINUX_PRIO_DIVIDER;
 		rtp->type = RTP_PRIO_NORMAL;
+		/*
+		 * Wrong: Normal type priority values were never the same as
+		 * that of the FIFO or realtime types.  To be fixed after
+		 * changing normal prio semantics.
+		 */
+		rtp->prio =
+		    linux_ioprio_to_rtprio(LINUX_IOPRIO_PRIO_DATA(ioprio));
 		break;
 	case LINUX_IOPRIO_CLASS_RT:
-		rtp->prio = LINUX_IOPRIO_PRIO_DATA(ioprio) * LINUX_PRIO_DIVIDER;
 		rtp->type = RTP_PRIO_REALTIME;
+		rtp->prio =
+		    linux_ioprio_to_rtprio(LINUX_IOPRIO_PRIO_DATA(ioprio));
 		break;
 	default:
 		return (EINVAL);
@@ -2858,11 +2900,16 @@ linux_ioprio_get(struct thread *td, struct linux_ioprio_get_args *args)
 	}
 
 	if (error == 0) {
-		if (found)
-			td->td_retval[0] = linux_rtprio2ioprio(&rtp);
-		else
+		if (found) {
+			int ioprio;
+
+			error = linux_rtprio2ioprio(&rtp, &ioprio);
+			if (error == 0)
+				td->td_retval[0] = ioprio;
+		} else
 			error = ESRCH;
 	}
+
 	return (error);
 }
 
