@@ -1260,6 +1260,46 @@ linux_getrlimit(struct thread *td, struct linux_getrlimit_args *args)
 	return (copyout(&rlim, args->rlim, sizeof(rlim)));
 }
 
+/* 'policy' is FreeBSD's. */
+static int
+posix_prio_from_linux(int policy, struct sched_param *params)
+{
+
+	switch (policy) {
+	case SCHED_OTHER:
+		if (params->sched_priority != 0)
+			break;
+
+		params->sched_priority =
+		    (P1B_TS_PRIO_MIN + P1B_TS_PRIO_MAX) / 2;
+		return (0);
+	case SCHED_FIFO:
+	case SCHED_RR:
+		if (params->sched_priority < 1 ||
+		    /* On Linux, this "max" can't be reached... */
+		    params->sched_priority >= LINUX_MAX_RT_PRIO)
+			break;
+
+		/*
+		 * Map [1, LINUX_MAX_RT_PRIO - 1] to [P1B_RT_PRIO_MIN,
+		 * P1B_RT_PRIO_MAX], rounding down to ensure that only the
+		 * maximal priority gets converted to the internal maximal one
+		 * (this is somewhat arbitrary).  Rounding here has to be the
+		 * opposite of that of the inverse operation (in
+		 * posix_prio_to_linux()) to avoid convergence of priority to
+		 * one end of the ranges in case of repeated back and forth
+		 * conversions.
+		 */
+		params->sched_priority = P1B_RT_PRIO_MIN +
+		    (params->sched_priority - 1) *
+		    (P1B_RT_PRIO_MAX - P1B_RT_PRIO_MIN) /
+		    (LINUX_MAX_RT_PRIO - 2);
+		return (0);
+	}
+
+	return (EINVAL);
+}
+
 int
 linux_sched_setscheduler(struct thread *td,
     struct linux_sched_setscheduler_args *args)
@@ -1283,34 +1323,13 @@ linux_sched_setscheduler(struct thread *td,
 	}
 
 	error = copyin(args->param, &sched_param, sizeof(sched_param));
-	if (error)
+	if (error != 0)
 		return (error);
 
 	if (linux_map_sched_prio) {
-		switch (policy) {
-		case SCHED_OTHER:
-			if (sched_param.sched_priority != 0)
-				return (EINVAL);
-
-			sched_param.sched_priority =
-			    PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE;
-			break;
-		case SCHED_FIFO:
-		case SCHED_RR:
-			if (sched_param.sched_priority < 1 ||
-			    sched_param.sched_priority >= LINUX_MAX_RT_PRIO)
-				return (EINVAL);
-
-			/*
-			 * Map [1, LINUX_MAX_RT_PRIO - 1] to
-			 * [0, RTP_PRIO_MAX - RTP_PRIO_MIN] (rounding down).
-			 */
-			sched_param.sched_priority =
-			    (sched_param.sched_priority - 1) *
-			    (RTP_PRIO_MAX - RTP_PRIO_MIN + 1) /
-			    (LINUX_MAX_RT_PRIO - 1);
-			break;
-		}
+		error = posix_prio_from_linux(policy, &sched_param);
+		if (error != 0)
+			return (error);
 	}
 
 	tdt = linux_tdfind(td, args->pid, -1);
@@ -1855,7 +1874,7 @@ linux_sched_setparam(struct thread *td,
 	int error, policy;
 
 	error = copyin(uap->param, &sched_param, sizeof(sched_param));
-	if (error)
+	if (error != 0)
 		return (error);
 
 	tdt = linux_tdfind(td, uap->pid, -1);
@@ -1864,40 +1883,47 @@ linux_sched_setparam(struct thread *td,
 
 	if (linux_map_sched_prio) {
 		error = kern_sched_getscheduler(td, tdt, &policy);
-		if (error)
+		if (error != 0)
 			goto out;
 
-		switch (policy) {
-		case SCHED_OTHER:
-			if (sched_param.sched_priority != 0) {
-				error = EINVAL;
-				goto out;
-			}
-			sched_param.sched_priority =
-			    PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE;
-			break;
-		case SCHED_FIFO:
-		case SCHED_RR:
-			if (sched_param.sched_priority < 1 ||
-			    sched_param.sched_priority >= LINUX_MAX_RT_PRIO) {
-				error = EINVAL;
-				goto out;
-			}
-			/*
-			 * Map [1, LINUX_MAX_RT_PRIO - 1] to
-			 * [0, RTP_PRIO_MAX - RTP_PRIO_MIN] (rounding down).
-			 */
-			sched_param.sched_priority =
-			    (sched_param.sched_priority - 1) *
-			    (RTP_PRIO_MAX - RTP_PRIO_MIN + 1) /
-			    (LINUX_MAX_RT_PRIO - 1);
-			break;
-		}
+		error = posix_prio_from_linux(policy, &sched_param);
+		if (error != 0)
+			goto out;
 	}
 
 	error = kern_sched_setparam(td, tdt, &sched_param);
 out:	PROC_UNLOCK(tdt->td_proc);
 	return (error);
+}
+
+static int
+posix_prio_to_linux(int policy, struct sched_param *params)
+{
+
+	switch (policy) {
+	case SCHED_OTHER:
+		/* Linux admits a single valid priority for this policy. */
+		params->sched_priority = 0;
+		return (0);
+	case SCHED_FIFO:
+	case SCHED_RR:
+		KASSERT(P1B_RT_PRIO_MIN <= params->sched_priority &&
+		    params->sched_priority <= P1B_RT_PRIO_MAX,
+		    ("Invalid 'struct sched_param' input"));
+		/*
+		 * Map [P1B_RT_PRIO_MIN, P1B_RT_PRIO_MAX] to [1,
+		 * LINUX_MAX_RT_PRIO - 1], rounding up as the inverse operation
+		 * (in posix_prio_from_linux()) rounds down, in order to avoid
+		 * convergence of priority to one end of the ranges in case of
+		 * repeated back and forth conversions.
+		 */
+		params->sched_priority = 1 +
+		    howmany((params->sched_priority - P1B_RT_PRIO_MIN) *
+		    (LINUX_MAX_RT_PRIO - 2), P1B_RT_PRIO_MAX - P1B_RT_PRIO_MIN);
+		return (0);
+	}
+
+	return (EINVAL);
 }
 
 int
@@ -1913,7 +1939,7 @@ linux_sched_getparam(struct thread *td,
 		return (ESRCH);
 
 	error = kern_sched_getparam(td, tdt, &sched_param);
-	if (error) {
+	if (error != 0) {
 		PROC_UNLOCK(tdt->td_proc);
 		return (error);
 	}
@@ -1921,26 +1947,13 @@ linux_sched_getparam(struct thread *td,
 	if (linux_map_sched_prio) {
 		error = kern_sched_getscheduler(td, tdt, &policy);
 		PROC_UNLOCK(tdt->td_proc);
-		if (error)
+		if (error != 0)
 			return (error);
 
-		switch (policy) {
-		case SCHED_OTHER:
-			sched_param.sched_priority = 0;
-			break;
-		case SCHED_FIFO:
-		case SCHED_RR:
-			/*
-			 * Map [0, RTP_PRIO_MAX - RTP_PRIO_MIN] to
-			 * [1, LINUX_MAX_RT_PRIO - 1] (rounding up).
-			 */
-			sched_param.sched_priority =
-			    (sched_param.sched_priority *
-			    (LINUX_MAX_RT_PRIO - 1) +
-			    (RTP_PRIO_MAX - RTP_PRIO_MIN - 1)) /
-			    (RTP_PRIO_MAX - RTP_PRIO_MIN) + 1;
-			break;
-		}
+		error = posix_prio_to_linux(policy, &sched_param);
+		if (error != 0)
+			return (error);
+
 	} else
 		PROC_UNLOCK(tdt->td_proc);
 
