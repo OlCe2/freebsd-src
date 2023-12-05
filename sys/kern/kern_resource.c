@@ -622,6 +622,24 @@ rtprio_thread_postamble(struct thread *td, int function,
 	return (error);
 }
 
+/*
+ * Get a thread by ID, accepting ID 0 as the passed one.
+ *
+ * 'td' must not be NULL.  Returns NULL if no thread matches, else has locked
+ * the returned thread's process.
+ */
+struct thread *
+rtprio_get_thread_by_id(struct thread *const td, lwpid_t const tid)
+{
+
+	if (tid == 0) {
+		PROC_LOCK(td->td_proc);
+		return (td);
+	}
+
+	return (tdfind(tid, -1));
+}
+
 int
 kern_rtprio_thread_by_id(struct thread *td, int function, lwpid_t lwpid,
     struct rtprio *rtp)
@@ -634,16 +652,10 @@ kern_rtprio_thread_by_id(struct thread *td, int function, lwpid_t lwpid,
 	if (error != 0)
 		return (error);
 
-	if (lwpid == 0) {
-		ttd = td;
-		tp = td->td_proc;
-		PROC_LOCK(tp);
-	} else {
-		ttd = tdfind(lwpid, -1);
-		if (ttd == NULL)
-			return (ESRCH);
-		tp = ttd->td_proc;
-	}
+	ttd = rtprio_get_thread_by_id(td, lwpid);
+	if (ttd == NULL)
+		return (ESRCH);
+	tp = ttd->td_proc;
 
 	error = rtprio_thread_postamble(td, function, ttd, tp, rtp);
 

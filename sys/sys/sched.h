@@ -282,17 +282,25 @@ struct sched_attr_v1 {
  * These are scheduling policies obeying the general POSIX rules.  Extensions
  * are marked as such.
  *
- * All the values below are accepted and returned by the POSIX interface,
- * including sched_setscheduler(), sched_getscheduler() and pthread functions to
- * manipulate the scheduling attributes of a thread or those held by a thread
- * attributes objet.
+ * All the values below, except SCHED_CURRENT, are accepted and returned by the
+ * POSIX interface, including sched_setscheduler(), sched_getscheduler() and
+ * pthread functions to manipulate the scheduling attributes of a thread or
+ * those held by a thread attributes objet.
  *
- * They are also all accepted and returned by system calls thr_sched_set() and
- * thr_sched_get() (with version 1).
+ * The same values are also accepted and returned by system calls
+ * thr_sched_set() and thr_sched_get() (with version 1).
+ *
+ * Value SCHED_CURRENT can be used only with thr_sched_set() (version 1) to
+ * indicate that the policy shouldn't be changed, but the other parameters will
+ * (according to the current policy).  This value is never returned by the
+ * system, e.g., via thr_sched_get().  The latter function may return EOVERFLOW
+ * to indicate a scheduling policy that can't be described in the POSIX
+ * framework.
  */
 #define SCHED_FIFO      1
 #define SCHED_OTHER     2
 #define SCHED_RR        3
+#define SCHED_CURRENT   0xFFFF	/* FreeBSD extension, see above. */
 
 struct sched_param {
 	/*

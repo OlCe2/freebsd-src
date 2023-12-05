@@ -722,18 +722,90 @@ kern_thr_alloc(struct proc *p, int pages, struct thread **ntd)
 	return (0);
 }
 
+/*
+ * Perform all operations that don't need locks upfront, in particular basic
+ * sanity checks, priority specification conversion and permission to apply this
+ * specification.
+ */
+static int
+thr_sched_set_preamble(struct thread *const td,
+    const struct sched_attr *const attr, struct rtprio *const rtp)
+{
+
+	if (attr->policy == SCHED_CURRENT)
+		/*
+		 * We can't check whether the attributes are valid until we have
+		 * fetched the current scheduling policy.  We will do so later
+		 * in the postamble.
+		 */
+		return (0);
+
+	return (posix_sched_to_rtp(attr, rtp));
+}
+
+static int
+thr_sched_set_postamble(struct thread *const td, struct thread *const target_td,
+    const struct sched_attr *const attr, struct rtprio *const rtp)
+{
+	struct sched_attr final_attr;
+	int error;
+
+	if (attr->policy == SCHED_CURRENT) {
+		__typeof(final_attr.policy) cur_policy;
+
+		error = rtp_get_thread(td, target_td, rtp);
+		if (error != 0)
+			return (error);
+
+		error = rtp_to_posix_sched(rtp, &final_attr);
+		if (error != 0)
+			return (error);
+
+		/*
+		 * Don't depend on the number and name of fields other than
+		 * 'policy'.  And for the latter, be sure to catch a change in
+		 * size by using __typeof() to declare 'cur_policy'.
+		 */
+		cur_policy = final_attr.policy;
+		final_attr = *attr;
+		final_attr.policy = cur_policy;
+
+		/*
+		 * Finally perform the same conversion as in the preamble for
+		 * the non-SCHED_CURRENT cases.
+		 */
+		error = posix_sched_to_rtp(attr, rtp);
+		if (error != 0)
+			return (error);
+	}
+
+	error = rtp_can_set_prio(td, rtp);
+	if (error != 0)
+		return (error);
+
+	return (rtp_set_thread(td, rtp, target_td));
+}
+
 int
 kern_thr_sched_set_by_id(struct thread *td, lwpid_t lwpid,
     const struct sched_attr *attr)
 {
+	struct thread *ttd;
 	struct rtprio rtp;
 	int error;
 
-	error = posix_sched_to_rtp(attr, &rtp);
+	error = thr_sched_set_preamble(td, attr, &rtp);
 	if (error != 0)
 		return (error);
 
-	return (kern_rtprio_thread_by_id(td, RTP_SET, lwpid, &rtp));
+	ttd = rtprio_get_thread_by_id(td, lwpid);
+	if (ttd == NULL)
+		return (ESRCH);
+
+	error = thr_sched_set_postamble(td, ttd, attr, &rtp);
+
+	PROC_UNLOCK(ttd->td_proc);
+	return (error);
 }
 
 int
@@ -743,11 +815,13 @@ kern_thr_sched_set(struct thread *td, struct thread *target_td,
 	struct rtprio rtp;
 	int error;
 
-	error = posix_sched_to_rtp(attr, &rtp);
+	PROC_LOCK_ASSERT(target_td->td_proc, MA_OWNED);
+
+	error = thr_sched_set_preamble(td, attr, &rtp);
 	if (error != 0)
 		return (error);
 
-	return (kern_rtprio_thread(td, RTP_SET, target_td, &rtp));
+	return (thr_sched_set_postamble(td, target_td, attr, &rtp));
 }
 
 #ifndef _SYS_SYSPROTO_H_
