@@ -1058,7 +1058,6 @@ int _thr_attr_setguardsize(pthread_attr_t *, size_t);
 int _thr_attr_setinheritsched(pthread_attr_t *, int);
 int _thr_attr_setschedparam(pthread_attr_t * __restrict,
     const struct sched_param * __restrict);
-int _thr_sched_policy_default_priority(int policy) __hidden;
 int _thr_attr_setschedpolicy(pthread_attr_t *, int);
 int _thr_attr_setscope(pthread_attr_t *, int);
 int _thr_attr_setstackaddr(pthread_attr_t *, void *);

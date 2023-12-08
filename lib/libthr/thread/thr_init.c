@@ -71,8 +71,8 @@ atfork_head	_thr_atfork_list = TAILQ_HEAD_INITIALIZER(_thr_atfork_list);
 struct urwlock	_thr_atfork_lock = DEFAULT_URWLOCK;
 
 struct pthread_attr _pthread_attr_default = {
-	.sched_attr = { .policy = SCHED_OTHER,
-			.priority = 0 },
+	.sched_attr = { .policy = SCHED_NONE,
+			.priority = SCHED_PRIORITY_INVALID },
 	.sched_inherit = PTHREAD_INHERIT_SCHED,
 	.suspend = THR_CREATE_RUNNING,
 	.flags = PTHREAD_SCOPE_SYSTEM,

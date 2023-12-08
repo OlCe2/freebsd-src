@@ -221,18 +221,12 @@ _pthread_mutexattr_getprotocol(const pthread_mutexattr_t * __restrict mattr,
 int
 _pthread_mutexattr_setprotocol(pthread_mutexattr_t *mattr, int protocol)
 {
-	int pri;
 
 	if (mattr == NULL || *mattr == NULL ||
 	    protocol < PTHREAD_PRIO_NONE || protocol > PTHREAD_PRIO_PROTECT)
 		return (EINVAL);
 
-	pri = _thr_sched_policy_default_priority(SCHED_FIFO);
-	if (pri == -1)
-		return (errno);
-
 	(*mattr)->m_protocol = protocol;
-	(*mattr)->m_ceiling = pri;
 	return (0);
 }
 
