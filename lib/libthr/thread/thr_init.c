@@ -70,12 +70,6 @@ int		_thread_active_threads = 1;
 atfork_head	_thr_atfork_list = TAILQ_HEAD_INITIALIZER(_thr_atfork_list);
 struct urwlock	_thr_atfork_lock = DEFAULT_URWLOCK;
 
-struct pthread_prio	_thr_priorities[3] = {
-	{RTP_PRIO_MIN,  RTP_PRIO_MAX, 0}, /* FIFO */
-	{0, 0, 63}, /* OTHER */
-	{RTP_PRIO_MIN, RTP_PRIO_MAX, 0}  /* RR */
-};
-
 struct pthread_attr _pthread_attr_default = {
 	.sched_attr = { .policy = SCHED_OTHER,
 			.priority = 0 },

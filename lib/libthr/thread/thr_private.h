@@ -307,28 +307,6 @@ struct sleepqueue {
  */
 #define THR_STACK_INITIAL		(THR_STACK_DEFAULT * 2)
 
-/*
- * Define priorities returned by kernel.
- */
-#define THR_MIN_PRIORITY		(_thr_priorities[SCHED_OTHER-1].pri_min)
-#define THR_MAX_PRIORITY		(_thr_priorities[SCHED_OTHER-1].pri_max)
-#define THR_DEF_PRIORITY		(_thr_priorities[SCHED_OTHER-1].pri_default)
-
-#define THR_MIN_RR_PRIORITY		(_thr_priorities[SCHED_RR-1].pri_min)
-#define THR_MAX_RR_PRIORITY		(_thr_priorities[SCHED_RR-1].pri_max)
-#define THR_DEF_RR_PRIORITY		(_thr_priorities[SCHED_RR-1].pri_default)
-
-/* XXX The SCHED_FIFO should have same priority range as SCHED_RR */
-#define THR_MIN_FIFO_PRIORITY		(_thr_priorities[SCHED_FIFO_1].pri_min)
-#define THR_MAX_FIFO_PRIORITY		(_thr_priorities[SCHED_FIFO-1].pri_max)
-#define THR_DEF_FIFO_PRIORITY		(_thr_priorities[SCHED_FIFO-1].pri_default)
-
-struct pthread_prio {
-	int	pri_min;
-	int	pri_max;
-	int	pri_default;
-};
-
 struct pthread_rwlockattr {
 	int		pshared;
 };
@@ -749,8 +727,6 @@ extern struct pthread_mutex_attr _pthread_mutexattr_adaptive_default __hidden;
 /* Default condition variable attributes: */
 extern struct pthread_cond_attr _pthread_condattr_default __hidden;
 
-extern struct pthread_prio _thr_priorities[] __hidden;
-
 extern int	_thr_is_smp __hidden;
 
 extern size_t	_thr_guard_default __hidden;
@@ -1082,6 +1058,7 @@ int _thr_attr_setguardsize(pthread_attr_t *, size_t);
 int _thr_attr_setinheritsched(pthread_attr_t *, int);
 int _thr_attr_setschedparam(pthread_attr_t * __restrict,
     const struct sched_param * __restrict);
+int _thr_sched_policy_default_priority(int policy) __hidden;
 int _thr_attr_setschedpolicy(pthread_attr_t *, int);
 int _thr_attr_setscope(pthread_attr_t *, int);
 int _thr_attr_setstackaddr(pthread_attr_t *, void *);
