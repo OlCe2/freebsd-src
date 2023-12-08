@@ -427,50 +427,23 @@ _thr_attr_setschedparam(pthread_attr_t * __restrict attr,
 	return (_thr_sched_param_to_v1(param, &(*attr)->sched_attr));
 }
 
-/*
- * For SCHED_RR and SCHED_FIFO, returns the lower priority.  For other policies,
- * returns the middle of the allowable range.  This leaves room for both lower
- * and higher priority processes for these scheduling policies, and is crucial
- * for SCHED_OTHER which uses nice values.
- */
-int
-_thr_sched_policy_default_priority(int policy)
-{
-	int pri_min, pri_max;
-
-	pri_min = sched_get_priority_min(policy);
-	if (pri_min == -1 || policy == SCHED_FIFO || policy == SCHED_RR)
-		return (pri_min);
-
-	pri_max = sched_get_priority_max(policy);
-	if (pri_max == -1)
-		/*
-		 * Should never happen, since in this case
-		 * sched_get_priority_min() above should have failed as well.
-		 */
-		return (-1);
-
-	/* Round down to choose the lower priority when there is no median. */
-	return (pri_min + pri_max) / 2;
-}
-
 __weak_reference(_thr_attr_setschedpolicy, pthread_attr_setschedpolicy);
 __weak_reference(_thr_attr_setschedpolicy, _pthread_attr_setschedpolicy);
 
 int
 _thr_attr_setschedpolicy(pthread_attr_t *attr, int policy)
 {
-	int pri;
+	int pri_min;
 
 	if (attr == NULL || *attr == NULL)
 		return (EINVAL);
 
-	pri = _thr_sched_policy_default_priority(policy);
-	if (pri == -1)
+	pri_min = sched_get_priority_min(policy);
+	/* Is 'policy' known to the kernel? */
+	if (pri_min == -1)
 		return (errno);
 
 	(*attr)->sched_attr.policy = policy;
-	(*attr)->sched_attr.priority = pri;
 	return (0);
 }
 
