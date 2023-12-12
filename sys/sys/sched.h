@@ -282,13 +282,18 @@ struct sched_attr_v1 {
  * These are scheduling policies obeying the general POSIX rules.  Extensions
  * are marked as such.
  *
- * All the values below, except SCHED_CURRENT, are accepted and returned by the
- * POSIX interface, including sched_setscheduler(), sched_getscheduler() and
- * pthread functions to manipulate the scheduling attributes of a thread or
- * those held by a thread attributes objet.
+ * All the values below, except SCHED_NONE and SCHED_CURRENT, are accepted and
+ * returned by the POSIX interface, including sched_setscheduler(),
+ * sched_getscheduler() and pthread functions to manipulate the scheduling
+ * attributes of a thread or those held by a thread attributes objet.
  *
  * The same values are also accepted and returned by system calls
  * thr_sched_set() and thr_sched_get() (with version 1).
+ *
+ * Value SCHED_NONE is used as a sentinel and is never accepted or returned in
+ * any circumstances.  Consequently, it can be used to mark unset slots or
+ * variables.  It also imposes explicit initialization by implicitly matching
+ * initialized static variables (which are set to 0).
  *
  * Value SCHED_CURRENT can be used only with thr_sched_set() (version 1) to
  * indicate that the policy shouldn't be changed, but the other parameters will
@@ -297,6 +302,7 @@ struct sched_attr_v1 {
  * to indicate a scheduling policy that can't be described in the POSIX
  * framework.
  */
+#define SCHED_NONE      0	/* FreeBSD extension, see above. */
 #define SCHED_FIFO      1
 #define SCHED_OTHER     2
 #define SCHED_RR        3
