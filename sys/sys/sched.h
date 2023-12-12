@@ -316,6 +316,12 @@ struct sched_param {
 	int	sched_priority;
 };
 
+/*
+ * A priority value guaranteed to be invalid irrespective of the policy.  It is
+ * never accepted or returned in any circumstances by the system.  Consequently,
+ * it can be used to mark unset slots or variables.
+ */
+#define SCHED_PRIORITY_INVALID		(-1)
 
 #ifndef _KERNEL
 /*
