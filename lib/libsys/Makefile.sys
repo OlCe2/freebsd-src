@@ -38,7 +38,8 @@ SRCS+=	\
 	getpagesize.c \
 	getpagesizes.c \
 	interposing_table.c \
-	libsys_sigwait.c
+	libsys_sigwait.c \
+	sched_policies_info.c
 
 .if ${LIB} == "c"
 # Trapping stubs in dynamic libc to be filtered by libsys.
@@ -55,7 +56,9 @@ PSEUDO= \
 	exit \
 	getlogin \
 	gettimeofday \
-	sched_getcpu
+	sched_getcpu \
+	sched_get_priority_max \
+	sched_get_priority_min
 
 INTERPOSED = \
 	accept \
