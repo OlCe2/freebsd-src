@@ -280,10 +280,15 @@ donice(struct thread *td, struct proc *p, int n)
 
 /*
  * Realtime Priorities
+ *
+ * Includes implementations of the RT priorities specification (rtprio(2) and
+ * rtprio_thread(2)) and of POSIX.1b scheduling (e.g., sched_setscheduler(),
+ * sched_setparam(), sched_getscheduler() and sched_getparam()).
  */
 
 /*
- * Checks that priority bounds are sane.
+ * Check that priority bounds are sane when translating from POSIX.1b priorities
+ * to RT priorities and vice-versa.
  */
 #define _PRI_TRANSLATION_ASSERT(macro_from_p1b, macro_to_p1b, pri, p1b_pri) \
 	_Static_assert(macro_from_p1b(p1b_pri) == pri,			\
@@ -303,6 +308,23 @@ _PRI_TRANSLATION_ASSERT(p1bprio_to_tsprio, tsprio_to_p1bprio,
     RTP_TS_PRIO_MAX, P1B_TS_PRIO_MIN);
 
 #undef _PRI_TRANSLATION_ASSERT
+
+/*
+ * Check that the POSIX interface's priorities comply with the standard.
+ */
+
+#define CHECK_P1B_NON_NEGATIVE(pri)					\
+	_Static_assert(pri >= 0, __STRING(pri) " must be non-negative")
+
+CHECK_P1B_NON_NEGATIVE(P1B_RT_PRIO_MIN);
+CHECK_P1B_NON_NEGATIVE(P1B_RT_PRIO_MAX);
+CHECK_P1B_NON_NEGATIVE(P1B_TS_PRIO_MIN);
+CHECK_P1B_NON_NEGATIVE(P1B_TS_PRIO_MAX);
+
+#undef CHECK_P1B_NON_NEGATIVE
+
+_Static_assert(P1B_RT_PRIO_MAX - P1B_RT_PRIO_MIN + 1 >= 32,
+    "POSIX mandates at least 32 priorities in the realtime range");
 
 static int unprivileged_idprio;
 SYSCTL_INT(_security_bsd, OID_AUTO, unprivileged_idprio, CTLFLAG_RW,
