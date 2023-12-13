@@ -703,6 +703,31 @@ sys_rtprio_thread(struct thread *td, struct rtprio_thread_args *uap)
 	return (error);
 }
 
+/*
+ * POSIX.1b: Check the ranges.
+ *
+ * Values must be fully representable in the internal storage, bounds must be in
+ * the proper order and SCHED_PRIORITY_INVALID must not be part of these ranges.
+ */
+
+#define P1B_PRIORITY_TYPE						\
+	__typeof(((struct sched_attr_v1 *)NULL)->priority)
+
+#define CHECK_P1B_RANGE_VALID(min, max)					\
+	_Static_assert((P1B_PRIORITY_TYPE)min == min,			\
+	    "Min (" __STRING(min) ") does not fit in internal storage"); \
+	_Static_assert((P1B_PRIORITY_TYPE)max == max,			\
+	    "Max (" __STRING(max) ") does not fit in internal storage"); \
+	_Static_assert(min <= max,					\
+	    "Min (" __STRING(min) ") and max (" __STRING(max)		\
+	    ") inverted");
+
+CHECK_P1B_RANGE_VALID(P1B_RT_PRIO_MIN, P1B_RT_PRIO_MAX);
+CHECK_P1B_RANGE_VALID(P1B_TS_PRIO_MIN, P1B_TS_PRIO_MAX);
+
+#undef P1B_PRIORITY_TYPE
+#undef CHECK_P1B_RANGE_VALID
+
 static int
 check_convert_p1bprio_to_rt_range(u_short rtp_type, uint16_t priority,
     struct rtprio *rtp)
