@@ -106,6 +106,11 @@
 #define	LINUX_SCHED_OTHER	LINUX_SCHED_NORMAL
 #define	LINUX_SCHED_FIFO	1
 #define	LINUX_SCHED_RR		2
+#define	LINUX_SCHED_BATCH	3
+/* Next one is reserved but not implemented by Linux. */
+/* #define	LINUX_SCHED_ISO		4 */
+#define LINUX_SCHED_IDLE	5
+/* #define	LINUX_SCHED_DEADLINE	6 */
 
 #define	LINUX_MAX_RT_PRIO	100
 
