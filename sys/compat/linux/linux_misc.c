@@ -1305,7 +1305,7 @@ sched_policy_from_linux(int linux_policy, int *policy)
 {
 
 	switch (linux_policy) {
-	case LINUX_SCHED_OTHER:
+	case LINUX_SCHED_NORMAL:
 		*policy = SCHED_OTHER;
 		break;
 	case LINUX_SCHED_FIFO:
@@ -1358,7 +1358,7 @@ sched_policy_to_linux(int policy, int *linux_policy)
 
 	switch (policy) {
 	case SCHED_OTHER:
-		*linux_policy = LINUX_SCHED_OTHER;
+		*linux_policy = LINUX_SCHED_NORMAL;
 		break;
 	case SCHED_FIFO:
 		*linux_policy = LINUX_SCHED_FIFO;
@@ -1404,7 +1404,7 @@ linux_sched_get_priority_max(struct thread *td,
 
 	if (linux_map_sched_prio) {
 		switch (args->policy) {
-		case LINUX_SCHED_OTHER:
+		case LINUX_SCHED_NORMAL:
 			td->td_retval[0] = 0;
 			return (0);
 		case LINUX_SCHED_FIFO:
@@ -1432,7 +1432,7 @@ linux_sched_get_priority_min(struct thread *td,
 
 	if (linux_map_sched_prio) {
 		switch (args->policy) {
-		case LINUX_SCHED_OTHER:
+		case LINUX_SCHED_NORMAL:
 			td->td_retval[0] = 0;
 			return (0);
 		case LINUX_SCHED_FIFO:

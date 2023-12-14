@@ -102,7 +102,8 @@
 #endif
 
 /* Scheduling policies */
-#define	LINUX_SCHED_OTHER	0
+#define	LINUX_SCHED_NORMAL	0
+#define	LINUX_SCHED_OTHER	LINUX_SCHED_NORMAL
 #define	LINUX_SCHED_FIFO	1
 #define	LINUX_SCHED_RR		2
 
