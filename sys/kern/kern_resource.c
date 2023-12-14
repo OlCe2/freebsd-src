@@ -775,6 +775,10 @@ posix_sched_to_rtp(const struct sched_attr *const sched_attr,
 		rtp->prio = 0;
 		error = 0;
 		break;
+	case SCHED_IDLE:
+		error = check_convert_p1bprio_to_rt_range(RTP_PRIO_IDLE,
+		    sched_attr->priority, rtp);
+		break;
 	default:
 		error = EINVAL;
 		break;
@@ -816,6 +820,9 @@ rtp_to_posix_sched(const struct rtprio *const rtp,
 		sched_attr->policy = SCHED_OTHER;
 		sched_attr->priority = 0;
 		return (0);
+	case RTP_PRIO_IDLE:
+		return (check_convert_rt_range_to_p1bprio(SCHED_IDLE,
+		    rtp->prio, sched_attr));
 	}
 
 	return (EOVERFLOW);

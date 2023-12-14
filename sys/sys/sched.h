@@ -306,6 +306,7 @@ struct sched_attr_v1 {
 #define SCHED_FIFO      1
 #define SCHED_OTHER     2
 #define SCHED_RR        3
+#define SCHED_IDLE      4	/* FreeBSD extension. */
 #define SCHED_CURRENT   0xFFFF	/* FreeBSD extension, see above. */
 
 struct sched_param {
