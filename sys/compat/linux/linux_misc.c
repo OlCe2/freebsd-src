@@ -1300,6 +1300,27 @@ posix_prio_from_linux(int policy, struct sched_param *params)
 	return (EINVAL);
 }
 
+static int
+sched_policy_from_linux(int linux_policy, int *policy)
+{
+
+	switch (linux_policy) {
+	case LINUX_SCHED_OTHER:
+		*policy = SCHED_OTHER;
+		break;
+	case LINUX_SCHED_FIFO:
+		*policy = SCHED_FIFO;
+		break;
+	case LINUX_SCHED_RR:
+		*policy = SCHED_RR;
+		break;
+	default:
+		return (EINVAL);
+	}
+
+	return (0);
+}
+
 int
 linux_sched_setscheduler(struct thread *td,
     struct linux_sched_setscheduler_args *args)
@@ -1308,19 +1329,9 @@ linux_sched_setscheduler(struct thread *td,
 	struct thread *tdt;
 	int error, policy;
 
-	switch (args->policy) {
-	case LINUX_SCHED_OTHER:
-		policy = SCHED_OTHER;
-		break;
-	case LINUX_SCHED_FIFO:
-		policy = SCHED_FIFO;
-		break;
-	case LINUX_SCHED_RR:
-		policy = SCHED_RR;
-		break;
-	default:
-		return (EINVAL);
-	}
+	error = sched_policy_from_linux(args->policy, &policy);
+	if (error != 0)
+		return (error);
 
 	error = copyin(args->param, &sched_param, sizeof(sched_param));
 	if (error != 0)
@@ -1341,12 +1352,32 @@ linux_sched_setscheduler(struct thread *td,
 	return (error);
 }
 
+static int
+sched_policy_to_linux(int policy, int *linux_policy)
+{
+
+	switch (policy) {
+	case SCHED_OTHER:
+		*linux_policy = LINUX_SCHED_OTHER;
+		break;
+	case SCHED_FIFO:
+		*linux_policy = LINUX_SCHED_FIFO;
+		break;
+	case SCHED_RR:
+		*linux_policy = LINUX_SCHED_RR;
+		break;
+	default:
+		return (EOVERFLOW);
+	}
+	return (0);
+}
+
 int
 linux_sched_getscheduler(struct thread *td,
     struct linux_sched_getscheduler_args *args)
 {
 	struct thread *tdt;
-	int error, policy;
+	int error, policy, linux_policy;
 
 	tdt = linux_tdfind(td, args->pid, -1);
 	if (tdt == NULL)
@@ -1354,18 +1385,13 @@ linux_sched_getscheduler(struct thread *td,
 
 	error = kern_sched_getscheduler(td, tdt, &policy);
 	PROC_UNLOCK(tdt->td_proc);
+	if (error != 0)
+		return (error);
 
-	switch (policy) {
-	case SCHED_OTHER:
-		td->td_retval[0] = LINUX_SCHED_OTHER;
-		break;
-	case SCHED_FIFO:
-		td->td_retval[0] = LINUX_SCHED_FIFO;
-		break;
-	case SCHED_RR:
-		td->td_retval[0] = LINUX_SCHED_RR;
-		break;
-	}
+	error = sched_policy_to_linux(policy, &linux_policy);
+	if (error == 0)
+		td->td_retval[0] = linux_policy;
+
 	return (error);
 }
 
@@ -1374,6 +1400,7 @@ linux_sched_get_priority_max(struct thread *td,
     struct linux_sched_get_priority_max_args *args)
 {
 	struct sched_get_priority_max_args bsd;
+	int error;
 
 	if (linux_map_sched_prio) {
 		switch (args->policy) {
@@ -1389,19 +1416,10 @@ linux_sched_get_priority_max(struct thread *td,
 		}
 	}
 
-	switch (args->policy) {
-	case LINUX_SCHED_OTHER:
-		bsd.policy = SCHED_OTHER;
-		break;
-	case LINUX_SCHED_FIFO:
-		bsd.policy = SCHED_FIFO;
-		break;
-	case LINUX_SCHED_RR:
-		bsd.policy = SCHED_RR;
-		break;
-	default:
-		return (EINVAL);
-	}
+	error = sched_policy_from_linux(args->policy, &bsd.policy);
+	if (error != 0)
+		return (error);
+
 	return (sys_sched_get_priority_max(td, &bsd));
 }
 
@@ -1410,6 +1428,7 @@ linux_sched_get_priority_min(struct thread *td,
     struct linux_sched_get_priority_min_args *args)
 {
 	struct sched_get_priority_min_args bsd;
+	int error;
 
 	if (linux_map_sched_prio) {
 		switch (args->policy) {
@@ -1425,19 +1444,10 @@ linux_sched_get_priority_min(struct thread *td,
 		}
 	}
 
-	switch (args->policy) {
-	case LINUX_SCHED_OTHER:
-		bsd.policy = SCHED_OTHER;
-		break;
-	case LINUX_SCHED_FIFO:
-		bsd.policy = SCHED_FIFO;
-		break;
-	case LINUX_SCHED_RR:
-		bsd.policy = SCHED_RR;
-		break;
-	default:
-		return (EINVAL);
-	}
+	error = sched_policy_from_linux(args->policy, &bsd.policy);
+	if (error != 0)
+		return (error);
+
 	return (sys_sched_get_priority_min(td, &bsd));
 }
 
