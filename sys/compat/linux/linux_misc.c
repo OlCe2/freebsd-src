@@ -1339,6 +1339,7 @@ linux_sched_setscheduler(struct thread *td,
     struct linux_sched_setscheduler_args *args)
 {
 	struct sched_param sched_param;
+	struct sched_attr attr;
 	struct thread *tdt;
 	int error, policy;
 
@@ -1356,11 +1357,15 @@ linux_sched_setscheduler(struct thread *td,
 			return (error);
 	}
 
+	error = posix_policy_param_to_sched_attr(policy, &sched_param, &attr);
+	if (error != 0)
+		return (error);
+
 	tdt = linux_tdfind(td, args->pid, -1);
 	if (tdt == NULL)
 		return (ESRCH);
 
-	error = kern_sched_setscheduler(td, tdt, policy, &sched_param);
+	error = kern_thr_sched_set(td, tdt, &attr);
 	PROC_UNLOCK(tdt->td_proc);
 	return (error);
 }
@@ -1393,14 +1398,20 @@ linux_sched_getscheduler(struct thread *td,
     struct linux_sched_getscheduler_args *args)
 {
 	struct thread *tdt;
-	int error, policy, linux_policy;
+	struct sched_param param;
+	struct sched_attr attr;
+	int policy, linux_policy, error;
 
 	tdt = linux_tdfind(td, args->pid, -1);
 	if (tdt == NULL)
 		return (ESRCH);
 
-	error = kern_sched_getscheduler(td, tdt, &policy);
+	error = kern_thr_sched_get(td, tdt, &attr);
 	PROC_UNLOCK(tdt->td_proc);
+	if (error != 0)
+		return (error);
+
+	error = sched_attr_to_posix_policy_param(&attr, &policy, &param);
 	if (error != 0)
 		return (error);
 
@@ -1899,9 +1910,10 @@ int
 linux_sched_setparam(struct thread *td,
     struct linux_sched_setparam_args *uap)
 {
-	struct sched_param sched_param;
+	struct sched_attr attr;
+	struct sched_param previous_sched_param, sched_param;
 	struct thread *tdt;
-	int error, policy;
+	int policy, error;
 
 	error = copyin(uap->param, &sched_param, sizeof(sched_param));
 	if (error != 0)
@@ -1911,18 +1923,29 @@ linux_sched_setparam(struct thread *td,
 	if (tdt == NULL)
 		return (ESRCH);
 
-	if (linux_map_sched_prio) {
-		error = kern_sched_getscheduler(td, tdt, &policy);
-		if (error != 0)
-			goto out;
+	error = kern_thr_sched_get(td, tdt, &attr);
+	if (error != 0)
+		goto unlock_exit;
 
+	error = sched_attr_to_posix_policy_param
+	    (&attr, &policy, &previous_sched_param);
+	if (error != 0)
+		goto unlock_exit;
+
+	if (linux_map_sched_prio) {
 		error = posix_prio_from_linux(policy, &sched_param);
 		if (error != 0)
-			goto out;
+			goto unlock_exit;
 	}
 
-	error = kern_sched_setparam(td, tdt, &sched_param);
-out:	PROC_UNLOCK(tdt->td_proc);
+	error = posix_policy_param_to_sched_attr(policy, &sched_param, &attr);
+	if (error != 0)
+		goto unlock_exit;
+
+	error = kern_thr_sched_set(td, tdt, &attr);
+
+unlock_exit:
+	PROC_UNLOCK(tdt->td_proc);
 	return (error);
 }
 
@@ -1961,34 +1984,37 @@ int
 linux_sched_getparam(struct thread *td,
     struct linux_sched_getparam_args *uap)
 {
-	struct sched_param sched_param;
 	struct thread *tdt;
+	struct sched_attr attr;
+	struct sched_param param;
 	int error, policy;
 
 	tdt = linux_tdfind(td, uap->pid, -1);
 	if (tdt == NULL)
 		return (ESRCH);
 
-	error = kern_sched_getparam(td, tdt, &sched_param);
-	if (error != 0) {
-		PROC_UNLOCK(tdt->td_proc);
-		return (error);
-	}
+	error = kern_thr_sched_get(td, tdt, &attr);
+	if (error != 0)
+		goto unlock_exit;
+
+	error = sched_attr_to_posix_policy_param (&attr, &policy, &param);
+	if (error != 0)
+		goto unlock_exit;
 
 	if (linux_map_sched_prio) {
-		error = kern_sched_getscheduler(td, tdt, &policy);
-		PROC_UNLOCK(tdt->td_proc);
+		error = posix_prio_to_linux(policy, &param);
 		if (error != 0)
-			return (error);
+			goto unlock_exit;
+	}
 
-		error = posix_prio_to_linux(policy, &sched_param);
-		if (error != 0)
-			return (error);
+	PROC_UNLOCK(tdt->td_proc);
 
-	} else
-		PROC_UNLOCK(tdt->td_proc);
+	error = copyout(&param, uap->param, sizeof(param));
+	return (error);
 
-	error = copyout(&sched_param, uap->param, sizeof(sched_param));
+unlock_exit:
+	MPASS(error != 0);
+	PROC_UNLOCK(tdt->td_proc);
 	return (error);
 }
 

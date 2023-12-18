@@ -256,7 +256,6 @@ struct sched_attr {
 	__uint16_t	policy;
 	__uint16_t	priority;
 };
-
 #endif /* _KERNEL */
 
 #ifdef __BSD_VISIBLE
@@ -290,10 +289,13 @@ struct sched_attr_v1 {
  * The same values are also accepted and returned by system calls
  * thr_sched_set() and thr_sched_get() (with version 1).
  *
- * Value SCHED_NONE is used as a sentinel and is never accepted or returned in
- * any circumstances.  Consequently, it can be used to mark unset slots or
+ * Value SCHED_NONE is used as a sentinel and is never accepted in any
+ * circumstances.  Consequently, it can be used to mark unset slots or
  * variables.  It also imposes explicit initialization by implicitly matching
- * initialized static variables (which are set to 0).
+ * initialized static variables (which are set to 0).  It is not returned either
+ * by the interfaces except by sched_setscheduler() if the old scheduling policy
+ * is not representable with one of the constants below, since this is not
+ * considered a fatal error.
  *
  * Value SCHED_CURRENT can be used only with thr_sched_set() (version 1) to
  * indicate that the policy shouldn't be changed, but the other parameters will
@@ -324,7 +326,34 @@ struct sched_param {
  */
 #define SCHED_PRIORITY_INVALID		(-1)
 
-#ifndef _KERNEL
+#ifdef _KERNEL
+
+/*
+ * Conversion functions between kernel's 'struct sched_attr' and POSIX
+ * interface: 'policy' + 'struct sched_param'.  If/when there's a need to extend
+ * 'struct sched_param', we should create new system calls taking a new version
+ * of 'struct sched_attr_v1' below, and retain the old ones just for legacy
+ * (perhaps only under a COMPAT_ option).  The goal is that the kernel stops
+ * dealing with 'int policy' and 'struct sched_param' in new interfaces and only
+ * operates on 'struct sched_attr_vX' instead, with X the interface version
+ * (see version 1 below, already used for some thread system calls).
+ */
+int posix_policy_param_to_sched_attr(int const policy,
+    const struct sched_param *const param,
+    struct sched_attr *const attr);
+int sched_attr_to_posix_policy_param(const struct sched_attr *const attr,
+    int *const policy, struct sched_param *const param);
+
+int kern_sched_set_by_id(struct thread *const td, pid_t const pid,
+    const struct sched_attr *const attr);
+int kern_sched_set(struct thread *const td, struct proc *const target_p,
+    const struct sched_attr *const attr);
+int kern_sched_get_by_id(struct thread *td, pid_t const pid,
+    struct sched_attr *const attr);
+int kern_sched_get(struct thread *td, struct proc *const target_p,
+    struct sched_attr *const attr);
+
+#else /* !KERNEL */
 /*
  * POSIX scheduling declarations for userland.
  */
@@ -346,5 +375,5 @@ int     sched_setscheduler(pid_t, int, const struct sched_param *);
 int     sched_yield(void);
 __END_DECLS
 
-#endif /* !_KERNEL */
+#endif /* _KERNEL */
 #endif /* !_SCHED_H_ */

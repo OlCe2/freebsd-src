@@ -313,14 +313,6 @@ int	kern_rtprio_thread_by_id(struct thread *td, int function, lwpid_t lwpid,
 	    struct rtprio *rtp);
 int	kern_rtprio_thread(struct thread *td, int function,
 	    struct thread *target_td, struct rtprio *rtp);
-int	kern_sched_getparam(struct thread *td, struct thread *targettd,
-	    struct sched_param *param);
-int	kern_sched_getscheduler(struct thread *td, struct thread *targettd,
-	    int *policy);
-int	kern_sched_setparam(struct thread *td, struct thread *targettd,
-	    struct sched_param *param);
-int	kern_sched_setscheduler(struct thread *td, struct thread *targettd,
-	    int policy, struct sched_param *param);
 int	kern_sched_rr_get_interval(struct thread *td, pid_t pid,
 	    struct timespec *ts);
 int	kern_sched_rr_get_interval_td(struct thread *td, struct thread *targettd,
