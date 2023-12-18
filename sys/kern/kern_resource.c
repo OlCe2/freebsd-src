@@ -1104,6 +1104,270 @@ rtp_get_proc(struct thread *td, struct proc *p, struct rtprio *rtp)
 	return (0);
 }
 
+/*
+ * Get a process by ID, accepting 0 as meaning that of the passed thread.
+ */
+static struct proc *
+sched_get_proc_by_id(struct thread *const td, pid_t const pid)
+{
+	MPASS(td != NULL);
+
+	if (pid == 0) {
+		struct proc *const p = td->td_proc;
+		PROC_LOCK(p);
+		return (p);
+	}
+
+	return (pfind(pid));
+}
+
+static int
+sched_set_preamble(struct thread *const td, const struct sched_attr *const attr,
+    struct rtprio *const rtp)
+{
+	int error;
+
+	MPASS(td == curthread);
+
+	error = posix_sched_to_rtp(attr, rtp);
+	if (error != 0)
+		return (error);
+
+	return (rtp_can_set_prio(td, rtp));
+}
+
+int
+kern_sched_set_by_id(struct thread *const td, pid_t const pid,
+    const struct sched_attr *const attr)
+{
+	struct proc *p;
+	struct rtprio rtp;
+	int error;
+
+	error = sched_set_preamble(td, attr, &rtp);
+	if (error != 0)
+		return (error);
+
+	p = sched_get_proc_by_id(td, pid);
+	if (p == NULL)
+		return (ESRCH);
+
+	error = rtp_set_proc(td, &rtp, p);
+
+	PROC_UNLOCK(p);
+	return (error);
+}
+
+int
+kern_sched_set(struct thread *const td, struct proc *const target_p,
+    const struct sched_attr *const attr)
+{
+	struct rtprio rtp;
+	int error;
+
+	/*
+	 * We require it for the whole function as a means to ensure the process
+	 * is not going to vanish in the meantime.
+	 */
+	PROC_LOCK_ASSERT(target_p, MA_OWNED);
+
+	error = sched_set_preamble(td, attr, &rtp);
+	if (error == 0)
+		error = rtp_set_proc(td, &rtp, target_p);
+
+	return (error);
+}
+
+/* Caution: On error, fills output with garbage. */
+int
+posix_policy_param_to_sched_attr(int const policy,
+    const struct sched_param *const param, struct sched_attr *const attr)
+{
+
+	attr->policy = policy;
+	if (attr->policy != policy)
+		/* Wraparound. */
+		return (EINVAL);
+	attr->priority = param->sched_priority;
+	if (attr->priority != param->sched_priority)
+		/* Wraparound. */
+		return (EINVAL);
+	return (0);
+}
+
+/* Caution: On error, fills output with garbage. */
+int
+sched_attr_to_posix_policy_param(const struct sched_attr *const attr,
+    int *const policy, struct sched_param *const param)
+{
+
+	param->sched_priority = attr->priority;
+	if (param->sched_priority != attr->priority)
+		/* Not representable. */
+		return (EINVAL);
+	*policy = attr->policy;
+	if (*policy != attr->policy)
+		/* Not representable. */
+		return (EINVAL);
+	return (0);
+}
+
+int
+sys_sched_setscheduler(struct thread *td, struct sched_setscheduler_args *uap)
+{
+	struct proc *tp;
+	struct sched_param sched_param;
+	struct sched_attr previous_attr, attr;
+	int get_error, error;
+
+	error = copyin(uap->param, &sched_param, sizeof(sched_param));
+	if (error != 0)
+		return (error);
+
+	error = posix_policy_param_to_sched_attr(uap->policy, &sched_param,
+	    &attr);
+	if (error != 0)
+		return (error);
+
+	tp = sched_get_proc_by_id(td, uap->pid);
+	if (tp != NULL)
+		return (ESRCH);
+
+	/*
+	 * To comply with POSIX and FreeBSD tradition, we return the current
+	 * policy, so we have to grab it before changing it.  In case of error
+	 * for this step, which we do not consider to be fatal for the whole
+	 * process, we still proceed with trying to apply the new attributes.
+	 * If that last step works, then we'll return the special SCHED_NONE
+	 * value to indicate we cannot return the previous policy.
+	 */
+	get_error = kern_sched_get(td, tp, &previous_attr);
+
+	error = kern_sched_set(td, tp, &attr);
+	PROC_UNLOCK(tp);
+	if (error != 0)
+		return (error);
+
+	td->td_retval[0] = get_error == 0 ? previous_attr.policy : SCHED_NONE;
+	return (0);
+}
+
+int
+sys_sched_setparam(struct thread *td, struct sched_setparam_args *uap)
+{
+	struct proc *tp;
+	struct sched_param sched_param;
+	struct sched_attr previous_attr, attr;
+	int error;
+
+	error = copyin(uap->param, &sched_param, sizeof(sched_param));
+	if (error != 0)
+		return (error);
+
+	/*
+	 * Convert before taking the proc lock, knowing that the policy doesn't
+	 * matter.
+	 */
+	error = posix_policy_param_to_sched_attr(SCHED_NONE, &sched_param,
+	    &attr);
+	if (error != 0)
+		return (error);
+
+	tp = sched_get_proc_by_id(td, uap->pid);
+	if (tp != NULL)
+		return (ESRCH);
+
+	error = kern_sched_get(td, tp, &previous_attr);
+	if (error != 0)
+		goto unlock_exit;
+
+	attr.policy = previous_attr.policy;
+	error = kern_sched_set(td, tp, &attr);
+
+unlock_exit:
+	PROC_UNLOCK(tp);
+	return (error);
+}
+
+int
+kern_sched_get_by_id(struct thread *td, pid_t const pid,
+    struct sched_attr *const attr)
+{
+	struct proc *tp;
+	struct rtprio rtp;
+	int error;
+
+	tp = sched_get_proc_by_id(td, pid);
+	if (tp == NULL)
+		return (ESRCH);
+
+	error = rtp_get_proc(td, tp, &rtp);
+	PROC_UNLOCK(tp);
+
+	if (error == 0)
+		error = rtp_to_posix_sched(&rtp, attr);
+
+	return (error);
+}
+
+int
+kern_sched_get(struct thread *td, struct proc *const target_p,
+    struct sched_attr *const attr)
+{
+	struct rtprio rtp;
+	int error;
+
+	/*
+	 * We require it for the whole function as a means to ensure the process
+	 * is not going to vanish in the meantime.
+	 */
+	PROC_LOCK_ASSERT(target_p, MA_OWNED);
+
+	error = rtp_get_proc(td, target_p, &rtp);
+	if (error == 0)
+		error = rtp_to_posix_sched(&rtp, attr);
+
+	return (error);
+}
+
+int
+sys_sched_getscheduler(struct thread *td, struct sched_getscheduler_args *uap)
+{
+	struct sched_attr attr;
+	struct sched_param param;
+	int policy, error;
+
+	error = kern_sched_get_by_id(td, uap->pid, &attr);
+	if (error != 0)
+		return (error);
+
+	error = sched_attr_to_posix_policy_param(&attr, &policy, &param);
+
+	if (error == 0)
+		td->td_retval[0] = policy;
+
+	return (error);
+}
+
+int
+sys_sched_getparam(struct thread *td, struct sched_getparam_args *uap)
+{
+	struct sched_attr attr;
+	struct sched_param param;
+	int policy, error;
+
+	error = kern_sched_get_by_id(td, uap->pid, &attr);
+	if (error != 0)
+		return (error);
+
+	error = sched_attr_to_posix_policy_param(&attr, &policy, &param);
+
+	if (error == 0)
+		error = copyout(&param, uap->param, sizeof(param));
+
+	return (error);
+}
+
 #if defined(COMPAT_43)
 #ifndef _SYS_SYSPROTO_H_
 struct osetrlimit_args {
