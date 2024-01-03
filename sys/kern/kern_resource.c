@@ -502,7 +502,7 @@ rtprio_postamble(struct thread *td, int function, int flags, struct proc *tp,
 	case RTP_SET:
 		error = (flags & RP_THREAD_ONLY) ?
 		    rtp_set_thread(td, rtp, td) :
-		    rtp_set_proc(td, rtp, tp);
+		    rtp_set_proc(td, RSP_ATOMIC_ON_NO_CONCURRENCY, rtp, tp);
 		break;
 	default:
 		/* Prior call to rtprio_preamble() makes it impossible. */
@@ -912,6 +912,8 @@ _pri_higher(u_char left_pri_class, u_char left_pri,
 
 static const u_char lowest_class = PRI_IDLE;
 static const u_char lowest_pri = PRI_MAX;
+static const u_char highest_class = PRI_ITHD;
+static const u_char highest_pri = PRI_MIN;
 
 static inline void
 _pri_get_locked(struct thread *const ttd,
@@ -945,10 +947,67 @@ _Static_assert(PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE + 1 == TS_PRIO_RANGE_SIZE,
 _Static_assert(PRI_MAX_IDLE - PRI_MIN_IDLE + 1 == RTP_PRIO_RANGE_SIZE,
     "Code assumes one internal priority level per RTP_PRIO_IDLE level.");
 
-static void
-_rtp_set(const struct rtprio *rtp, struct thread *ttd)
+
+/*
+ * Sets the priority of the passed thread.
+ *
+ * 'increase_pri_result' indicates whether it has already been determined that
+ * the calling thread is allowed to increase priority of other
+ * processes/threads. It must be initialized to -1 before the first call to
+ * _pri_set() in a row by the current thread. On encountering for the first time
+ * a thread that should have its priority increased, _pri_set() will perform the
+ * privilege check and cache the result in 'increase_pri_result', which it will
+ * subsequently use should the situation occur again.
+ *
+ * This 'increase_pri_result' mechanism is used in order to avoid performing the
+ * same MAC privilege check multiple times uselessly, which requires temporarily
+ * dropping the thread lock.
+ */
+static int
+_pri_set(struct thread *const ttd, const u_char class, const u_char pri,
+    int *const increase_pri_result)
 {
-	u_char newpri, oldclass, oldpri;
+	u_char old_class, old_pri;
+
+restart:
+	thread_lock(ttd);
+	_pri_get_locked(ttd, &old_class, &old_pri);
+
+	/*
+	 * If we are going to increase the priority (lower it numerically), do
+	 * we have the appropriate privilege?
+	 */
+	if (*increase_pri_result != 0 &&
+	    _pri_higher(class, pri, old_class, old_pri)) {
+		thread_unlock(ttd);
+		if (*increase_pri_result != -1)
+			return (*increase_pri_result);
+		*increase_pri_result = priv_check(curthread,
+		    PRIV_SCHED_RAISEPRIO);
+		goto restart;
+	}
+
+	sched_class(ttd, class);
+	sched_user_prio(ttd, pri);
+	if (pri != old_pri && (class != PRI_TIMESHARE ||
+	    old_class != PRI_TIMESHARE))
+		sched_prio(ttd, pri);
+
+	if (TD_ON_UPILOCK(ttd) && pri != old_pri) {
+		critical_enter();
+		thread_unlock(ttd);
+		umtx_pi_adjust(ttd, old_pri);
+		critical_exit();
+	} else
+		thread_unlock(ttd);
+
+	return (0);
+}
+
+static void
+_rtp_to_pri(const struct rtprio *const rtp,
+    u_char *const class, u_char *const pri)
+{
 
 	KASSERT(rtp_is_valid(rtp) == 0,
 	    ("%s: Called with an invalid 'struct rtprio'.", __func__));
@@ -956,34 +1015,19 @@ _rtp_set(const struct rtprio *rtp, struct thread *ttd)
 	switch (rtp->type) {
 	case RTP_PRIO_FIFO:
 	case RTP_PRIO_REALTIME:
-		newpri = PRI_MIN_REALTIME + rtp->prio;
+		*pri = PRI_MIN_REALTIME + rtp->prio;
 		break;
 	case RTP_PRIO_NORMAL:
-		newpri = PRI_MIN_TIMESHARE + rtp->prio;
+		*pri = PRI_MIN_TIMESHARE + rtp->prio;
 		break;
 	case RTP_PRIO_IDLE:
-		newpri = PRI_MIN_IDLE + rtp->prio;
+		*pri = PRI_MIN_IDLE + rtp->prio;
 		break;
 	default:
-		/* rtp_is_valid() MUST be called prior to this function. */
+		/* rtp_is_valid() MUST have been called previously. */
 		__assert_unreachable();
 	}
-
-	thread_lock(ttd);
-	oldclass = ttd->td_pri_class;
-	sched_class(ttd, _rtp_to_pri_class(rtp->type));
-	oldpri = ttd->td_user_pri;
-	sched_user_prio(ttd, newpri);
-	if (ttd->td_user_pri != oldpri && (oldclass != RTP_PRIO_NORMAL ||
-	    ttd->td_pri_class != RTP_PRIO_NORMAL))
-		sched_prio(ttd, ttd->td_user_pri);
-	if (TD_ON_UPILOCK(ttd) && oldpri != newpri) {
-		critical_enter();
-		thread_unlock(ttd);
-		umtx_pi_adjust(ttd, oldpri);
-		critical_exit();
-	} else
-		thread_unlock(ttd);
+	*class = _rtp_to_pri_class(rtp->type);
 }
 
 /*
@@ -1005,7 +1049,9 @@ int
 rtp_set_thread(struct thread *td, const struct rtprio *rtp,
     struct thread *target_td)
 {
-	struct proc *tp = target_td->td_proc;
+	struct proc *const tp = target_td->td_proc;
+	int increase_pri_result;
+	u_char class, pri;
 
 	MPASS(td == curthread);
 	PROC_LOCK_ASSERT(tp, MA_OWNED);
@@ -1013,37 +1059,116 @@ rtp_set_thread(struct thread *td, const struct rtprio *rtp,
 	if (p_cansched(td, tp) != 0 || has_immutable_prio(tp))
 		return (EPERM);
 
-	_rtp_set(rtp, target_td);
-
-	return (0);
+	_rtp_to_pri(rtp, &class, &pri);
+	increase_pri_result = -1;
+	return (_pri_set(target_td, class, pri, &increase_pri_result));
 }
 
 /*
  * Set a process' threads' priority according to a RT Priority specification.
  *
  * Similar to rtp_set_thread() but operates on all threads of a process.  See
- * that function's documentation.
+ * that function's documentation for requirements.  Modification of user
+ * process' priority (or its rejection) is atomic with respect to all threads in
+ * the process except currently when modifying the priority level of a process
+ * with timeshare threads (and not changing its class) if the scheduler happens
+ * to be recalculating some thread's dynamic priority at the end of a tick.  See
+ * below the description of return codes for the precise behavior, as well as
+ * the usage of flags.
  *
- * 'td' must be 'curthread'.  Can fail with EPERM if 'curthread' is not allowed
- * to change the priority of 'proc' or if 'proc' cannot have its priority
- * changed, else returns 0.
+ * 'td' must be 'curthread'.
+ *
+ * Returns 0 on success.
+ *
+ * Can fail with EPERM if either:
+ * - 'proc' cannot have its priority changed at all.
+ * - 'curthread' is not allowed to change the priority of 'proc'.
+ * - Flag RSP_ATOMIC_ON_NO_CONCURRENCY was passed, and the function determined
+ *   beforehand that the new setting will lead to increasing the priority of
+ *   some thread, and 'curthread' does not have the corresponding privilege.
+ * - Flag RSP_ATOMIC_ON_NO_CONCURRENCY was not passed, and the priority of some
+ *   thread could not be increased to the specified value by lack of privilege
+ *   (see previous point).
+ *
+ * Can fail with EAGAIN if flag RSP_ATOMIC_ON_NO_CONCURRENCY was passed, if the
+ * priority of some thread has concurrently been decreased and 'curthread'
+ * consequently can't raise it to the prescribed value by lack of privileges.
+ * This currently can only happen in the case evoked in the start paragraph
+ * above. In this case, the caller is advised to make the call again to obtain
+ * a stabilized result (0 or EPERM).
+ *
+ * In the EAGAIN case just described or the last one above for EPERM, all
+ * threads whose priority could be adjusted will have been changed.
+ *
+ * To wrap up, if RSP_ATOMIC_ON_NO_CONCURRENCY is passed, returns 0 if the
+ * priority of all threads was changed, EPERM if no priority was changed at all,
+ * or EAGAIN if the priority of at least some of the threads was modified
+ * concurrently in a way that the new priority couldn't be applied (it was
+ * lowered enough that the caller now has to increase it but lacks privilege).
+ *
+ * By contrast, if RSP_ATOMIC_ON_NO_CONCURRENCY is not passed, the EAGAIN case
+ * of the previous paragraph is folded into EPERM, and only 0 or EPERM can be
+ * returned. Thus, on EPERM, it is unspecified which threads were actually
+ * modified or not.
  */
+#define RSP_FLAG_MASK	RSP_ATOMIC_ON_NO_CONCURRENCY
 int
-rtp_set_proc(struct thread *td, const struct rtprio *rtp, struct proc *p)
+rtp_set_proc(struct thread *const td, const u_int flags,
+    struct rtprio *const rtp, struct proc *const p)
 {
-	struct thread *target_td;
+	struct thread *ttd;
+	int error, increase_pri_result;
+	u_char class, pri;
 
 	MPASS(td == curthread);
+	MPASS((flags & ~RSP_FLAG_MASK) == 0);
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 
 	if (p_cansched(td, p) != 0 || has_immutable_prio(p))
 		return (EPERM);
 
-	FOREACH_THREAD_IN_PROC(p, target_td) {
-		_rtp_set(rtp, target_td);
+	_rtp_to_pri(rtp, &class, &pri);
+
+	if ((flags & RSP_ATOMIC_ON_NO_CONCURRENCY) != 0) {
+		u_char min_class, min_pri;
+
+		/* Determine the target process' threads' minimum priority. */
+		min_class = highest_class;
+		min_pri = highest_pri;
+		FOREACH_THREAD_IN_PROC(p, ttd) {
+			u_char ttd_class, ttd_pri;
+
+			_pri_get(ttd, &ttd_class, &ttd_pri);
+			if (_pri_higher(min_class, min_pri,
+			    ttd_class, ttd_pri)) {
+				min_class = ttd_class;
+				min_pri = ttd_pri;
+			}
+		}
+
+		/*
+		 * Will we have to raise the priority of at least one thread?
+		 * And if so, do we have privilege to do that?
+		 */
+		if (_pri_higher(class, pri, min_class, min_pri) &&
+		    (increase_pri_result = priv_check(td, PRIV_SCHED_RAISEPRIO))
+		    != 0)
+			return (increase_pri_result);
+	} else
+		increase_pri_result = -1;
+
+	error = 0;
+	FOREACH_THREAD_IN_PROC(p, ttd) {
+		int td_error;
+
+		td_error = _pri_set(ttd, class, pri, &increase_pri_result);
+		/* Note the first problem with a thread, but continue. */
+		if (error == 0 && td_error != 0)
+			error = flags & RSP_ATOMIC_ON_NO_CONCURRENCY ?
+			    EAGAIN : td_error;
 	}
 
-	return (0);
+	return (error);
 }
 
 
@@ -1192,7 +1317,7 @@ kern_sched_set_by_id(struct thread *const td, pid_t const pid,
 	if (p == NULL)
 		return (ESRCH);
 
-	error = rtp_set_proc(td, &rtp, p);
+	error = rtp_set_proc(td, RSP_ATOMIC_ON_NO_CONCURRENCY, &rtp, p);
 
 	PROC_UNLOCK(p);
 	return (error);
@@ -1213,7 +1338,8 @@ kern_sched_set(struct thread *const td, struct proc *const target_p,
 
 	error = sched_set_preamble(td, attr, &rtp);
 	if (error == 0)
-		error = rtp_set_proc(td, &rtp, target_p);
+		error = rtp_set_proc(td, RSP_ATOMIC_ON_NO_CONCURRENCY, &rtp,
+		    target_p);
 
 	return (error);
 }
