@@ -207,7 +207,8 @@ int	posix_sched_to_rtp(const struct sched_attr *, struct rtprio *);
 int	rtp_to_posix_sched(const struct rtprio *, struct sched_attr *);
 int	rtp_set_thread(struct thread *_curthread, const struct rtprio *,
 	    struct thread *_target_td);
-int	rtp_set_proc(struct thread *_curthread, const struct rtprio *,
+#define RSP_ATOMIC_ON_NO_CONCURRENCY	1
+int	rtp_set_proc(struct thread *, const u_int, struct rtprio *,
 	    struct proc *_target_proc);
 int	rtp_get_thread(struct thread *_curthread, struct thread *_target_td,
 	    struct rtprio *);

@@ -3004,7 +3004,7 @@ linux_ioprio_set(struct thread *td, struct linux_ioprio_set_args *args)
 		if (p == NULL)
 			return (ESRCH);
 		error = (td1 != NULL) ? rtp_set_thread(td, &rtp, td1) :
-		    rtp_set_proc(td, &rtp, p);
+		    rtp_set_proc(td, 0, &rtp, p);
 		PROC_UNLOCK(p);
 		break;
 	case LINUX_IOPRIO_WHO_PGRP:
@@ -3024,7 +3024,7 @@ linux_ioprio_set(struct thread *td, struct linux_ioprio_set_args *args)
 		LIST_FOREACH(p, &pg->pg_members, p_pglist) {
 			PROC_LOCK(p);
 			if (p->p_state == PRS_NORMAL)
-				error = rtp_set_proc(td, &rtp, p);
+				error = rtp_set_proc(td, 0, &rtp, p);
 			PROC_UNLOCK(p);
 			/* Linux bails out on first error. */
 			if (error != 0)
@@ -3040,7 +3040,7 @@ linux_ioprio_set(struct thread *td, struct linux_ioprio_set_args *args)
 			PROC_LOCK(p);
 			if (p->p_state == PRS_NORMAL &&
 			    p->p_ucred->cr_uid == args->who)
-				error = rtp_set_proc(td, &rtp, p);
+				error = rtp_set_proc(td, 0, &rtp, p);
 			PROC_UNLOCK(p);
 			/* Linux bails out on first error. */
 			if (error != 0)
