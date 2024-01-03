@@ -39,6 +39,7 @@
 #include <sys/sysproto.h>
 #include <sys/file.h>
 #include <sys/kernel.h>
+#include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mutex.h>
@@ -867,6 +868,71 @@ _rtp_to_pri_class(u_short rtp_class)
 }
 
 /*
+ * Returns UCHAR_MAX if the class is unknown, else a value reflecting the
+ * relative position of the class on an axis growing from the highest to the
+ * lowest priority classes.  In other words, the class with the smallest value
+ * has the most priority.  Do not rely on the absolute value returned, except
+ * for UCHAR_MAX.
+ */
+static inline u_char
+_pri_class_order(u_char pri_class)
+{
+
+	/* Please keep the cases sorted by return value. */
+	switch (pri_class) {
+	case PRI_ITHD:
+		return (10);
+	case PRI_FIFO:
+		return (20);
+	case PRI_REALTIME:
+		return (30);
+	case PRI_TIMESHARE:
+		return (50);
+	case PRI_IDLE:
+		return (60);
+	default:
+#ifdef INVARIANTS
+		panic("%s: Unknown priority class %hhu", __func__, pri_class);
+#endif
+		return (UCHAR_MAX);
+	}
+}
+
+/* Higher means smaller numerically for the priority level fields. */
+static inline bool
+_pri_higher(u_char left_pri_class, u_char left_pri,
+    u_char right_pri_class, u_char right_pri)
+{
+
+	return (left_pri < right_pri ||
+	    (left_pri == right_pri &&
+	    _pri_class_order(left_pri_class) <
+	    _pri_class_order(right_pri_class)));
+}
+
+static const u_char lowest_class = PRI_IDLE;
+static const u_char lowest_pri = PRI_MAX;
+
+static inline void
+_pri_get_locked(struct thread *const ttd,
+    u_char *const class, u_char *const pri)
+{
+
+	THREAD_LOCK_ASSERT(ttd, MA_OWNED);
+	*class = ttd->td_pri_class;
+	*pri = ttd->td_user_pri;
+}
+
+static inline void
+_pri_get(struct thread *const ttd, u_char *const class, u_char *const pri)
+{
+
+	thread_lock(ttd);
+	_pri_get_locked(ttd, class, pri);
+	thread_unlock(ttd);
+}
+
+/*
  * Check that realtime and idle ranges for internal and RT priorities have
  * exactly the same size.  Code below assumes these properties.  So does that
  * dealing with the PTHREAD_PRIO_PROTECT protocol of user-space mutexes (see
@@ -980,16 +1046,10 @@ rtp_set_proc(struct thread *td, const struct rtprio *rtp, struct proc *p)
 	return (0);
 }
 
-static int
-_rtp_get(struct thread *ttd, struct rtprio *rtp)
+
+static inline int
+_rtp_from_pri(const u_char class, const u_char pri, struct rtprio *const rtp)
 {
-	u_char pri_class, pri;
-
-	thread_lock(ttd);
-	pri_class = ttd->td_pri_class;
-	pri = ttd->td_base_user_pri;
-	thread_unlock(ttd);
-
 #define _RTP_GET_IN_RANGE(min, max)					\
 	do {								\
 		if (__predict_false(pri < min || pri > max))		\
@@ -997,7 +1057,7 @@ _rtp_get(struct thread *ttd, struct rtprio *rtp)
 		rtp->prio = pri - min;					\
 	} while (0)
 
-	switch (PRI_BASE(pri_class)) {
+	switch (PRI_BASE(class)) {
 	case PRI_REALTIME:
 		_RTP_GET_IN_RANGE(PRI_MIN_REALTIME, PRI_MAX_REALTIME);
 		break;
@@ -1013,7 +1073,7 @@ _rtp_get(struct thread *ttd, struct rtprio *rtp)
 
 #undef _RTP_GET_IN_RANGE
 
-	rtp->type = _rtp_from_pri_class(pri_class);
+	rtp->type = _rtp_from_pri_class(class);
 	MPASS(rtp_is_valid(rtp));
 	return (0);
 }
@@ -1032,6 +1092,7 @@ int
 rtp_get_thread(struct thread *td, struct thread *target_td, struct rtprio *rtp)
 {
 	struct proc *tp = target_td->td_proc;
+	u_char class, pri;
 
 	MPASS(td == curthread);
 	PROC_LOCK_ASSERT(tp, MA_OWNED);
@@ -1039,32 +1100,8 @@ rtp_get_thread(struct thread *td, struct thread *target_td, struct rtprio *rtp)
 	if (p_cansee(td, tp) != 0)
 		return (EPERM);
 
-	return (_rtp_get(target_td, rtp));
-}
-
-static const struct rtprio lowest_pri_rtp = {
-	.type = RTP_PRIO_IDLE,
-	.prio = RTP_PRIO_MAX
-};
-
-static inline struct rtprio
-_rtp_highest_pri(const struct rtprio *rtp1, const struct rtprio *rtp2)
-{
-
-	if (rtp1->type > rtp2->type) {
-		const struct rtprio *const tmp = rtp1;
-		rtp1 = rtp2;
-		rtp2 = tmp;
-	}
-
-	if (rtp1->type != rtp2->type) {
-		if (rtp1->type != RTP_PRIO_ITHD && rtp2->type == RTP_PRIO_FIFO)
-			return (*rtp2);
-		else
-			return (*rtp1);
-	}
-
-	return (rtp1->prio <= rtp2->prio) ? *rtp1 : *rtp2;
+	_pri_get(target_td, &class, &pri);
+	return (_rtp_from_pri(class, pri, rtp));
 }
 
 /*
@@ -1083,8 +1120,7 @@ int
 rtp_get_proc(struct thread *td, struct proc *p, struct rtprio *rtp)
 {
 	struct thread *ttd;
-	struct rtprio td_rtp;
-	int error;
+	u_char max_class, max_pri;
 
 	MPASS(td == curthread);
 	PROC_LOCK_ASSERT(p, MA_OWNED);
@@ -1092,16 +1128,20 @@ rtp_get_proc(struct thread *td, struct proc *p, struct rtprio *rtp)
 	if (p_cansee(td, p) != 0)
 		return (EPERM);
 
-	*rtp = lowest_pri_rtp;
-
+	/* We'll report the maximum priority. */
+	max_class = lowest_class;
+	max_pri = lowest_pri;
 	FOREACH_THREAD_IN_PROC(p, ttd) {
-		error = _rtp_get(ttd, &td_rtp);
-		if (error != 0)
-			return (error);
-		*rtp = _rtp_highest_pri(rtp, &td_rtp);
+		u_char ttd_class, ttd_pri;
+
+		_pri_get(ttd, &ttd_class, &ttd_pri);
+		if (_pri_higher(ttd_class, ttd_pri, max_class, max_pri)) {
+			max_class = ttd_class;
+			max_pri = ttd_pri;
+		}
 	}
 
-	return (0);
+	return (_rtp_from_pri(max_class, max_pri, rtp));
 }
 
 /*
