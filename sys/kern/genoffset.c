@@ -33,7 +33,6 @@
 #include <sys/assym.h>
 #include <sys/proc.h>
 
-OFFSYM(td_priority, thread, u_char);
 OFFSYM(td_critnest, thread, u_int);
 OFFSYM(td_pinned, thread, int);
 OFFSYM(td_owepreempt, thread, u_char);
