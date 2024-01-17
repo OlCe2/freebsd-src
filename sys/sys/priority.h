@@ -127,6 +127,12 @@
 /* Other arguments for kern_yield(9). */
 #define	PRI_USER	-2	/* Change to current user priority. */
 #define	PRI_UNCHANGED	-1	/* Do not change priority. */
+
+/* Internal priority representation. */
+struct prio {
+	u_char level;
+	u_char flags;
+};
 #endif
 
 struct priority {

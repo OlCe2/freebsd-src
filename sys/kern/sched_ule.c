@@ -400,7 +400,7 @@ runq_print(struct runq *rq)
 				rqh = &rq->rq_queues[pri];
 				TAILQ_FOREACH(td, rqh, td_runq) {
 					printf("\t\t\ttd %p(%s) priority %d rqindex %d pri %d\n",
-					    td, td->td_name, td->td_priority,
+					    td, td->td_name, td->td_priority.level,
 					    td->td_rqindex, pri);
 				}
 			}
@@ -482,7 +482,7 @@ tdq_runq_add(struct tdq *tdq, struct thread *td, int flags)
 	TDQ_LOCK_ASSERT(tdq, MA_OWNED);
 	THREAD_LOCK_BLOCKED_ASSERT(td, MA_OWNED);
 
-	pri = td->td_priority;
+	pri = td->td_priority.level;
 	ts = td_get_sched(td);
 	TD_SET_RUNQ(td);
 	if (THREAD_CAN_MIGRATE(td)) {
@@ -621,10 +621,10 @@ tdq_setlowpri(struct tdq *tdq)
 	TDQ_LOCK_ASSERT(tdq, MA_OWNED);
 	ctd = tdq->tdq_curthread;
 	td = tdq_choose(tdq);
-	if (td == NULL || td->td_priority > ctd->td_priority)
-		tdq->tdq_lowpri = ctd->td_priority;
+	if (td == NULL || td->td_priority.level > ctd->td_priority.level)
+		tdq->tdq_lowpri = ctd->td_priority.level;
 	else
-		tdq->tdq_lowpri = td->td_priority;
+		tdq->tdq_lowpri = td->td_priority.level;
 }
 
 /*
@@ -1352,8 +1352,8 @@ sched_pickcpu(struct thread *td, int flags)
 	 * Prefer to run interrupt threads on the processors that generate
 	 * the interrupt.
 	 */
-	if (td->td_priority <= PRI_MAX_ITHD && THREAD_CAN_SCHED(td, self) &&
-	    curthread->td_intr_nesting_level) {
+	if (td->td_priority.level <= PRI_MAX_ITHD &&
+	    THREAD_CAN_SCHED(td, self) && curthread->td_intr_nesting_level) {
 		tdq = TDQ_SELF();
 		if (tdq->tdq_lowpri >= PRI_MIN_IDLE) {
 			SCHED_STAT_INC(pickcpu_idle_affinity);
@@ -1414,7 +1414,7 @@ llc:
 		ccg = NULL;
 	cpu = -1;
 	mask = &td->td_cpuset->cs_mask;
-	pri = td->td_priority;
+	pri = td->td_priority.level;
 	r = TD_IS_RUNNING(td);
 	/*
 	 * Try hard to keep interrupts within found LLC.  Search the LLC for
@@ -1477,16 +1477,16 @@ tdq_choose(struct tdq *tdq)
 		return (td);
 	td = runq_choose_from(&tdq->tdq_timeshare, tdq->tdq_ridx);
 	if (td != NULL) {
-		KASSERT(td->td_priority >= PRI_MIN_BATCH,
+		KASSERT(td->td_priority.level >= PRI_MIN_BATCH,
 		    ("tdq_choose: Invalid priority on timeshare queue %d",
-		    td->td_priority));
+		    td->td_priority.level));
 		return (td);
 	}
 	td = runq_choose(&tdq->tdq_idle);
 	if (td != NULL) {
-		KASSERT(td->td_priority >= PRI_MIN_IDLE,
+		KASSERT(td->td_priority.level >= PRI_MIN_IDLE,
 		    ("tdq_choose: Invalid priority on idle queue %d",
-		    td->td_priority));
+		    td->td_priority.level));
 		return (td);
 	}
 
@@ -1557,7 +1557,7 @@ sched_setup(void *dummy)
 	thread0.td_lock = TDQ_LOCKPTR(tdq);
 	tdq_load_add(tdq, &thread0);
 	tdq->tdq_curthread = &thread0;
-	tdq->tdq_lowpri = thread0.td_priority;
+	tdq->tdq_lowpri = thread0.td_priority.level;
 	TDQ_UNLOCK(tdq);
 }
 
@@ -1866,18 +1866,18 @@ sched_thread_priority(struct thread *td, u_char prio)
 	int oldpri;
 
 	KTR_POINT3(KTR_SCHED, "thread", sched_tdname(td), "prio",
-	    "prio:%d", td->td_priority, "new prio:%d", prio,
+	    "prio:%d", td->td_priority.level, "new prio:%d", prio,
 	    KTR_ATTR_LINKED, sched_tdname(curthread));
 	SDT_PROBE3(sched, , , change__pri, td, td->td_proc, prio);
-	if (td != curthread && prio < td->td_priority) {
+	if (td != curthread && prio < td->td_priority.level) {
 		KTR_POINT3(KTR_SCHED, "thread", sched_tdname(curthread),
-		    "lend prio", "prio:%d", td->td_priority, "new prio:%d",
+		    "lend prio", "prio:%d", td->td_priority.level, "new prio:%d",
 		    prio, KTR_ATTR_LINKED, sched_tdname(td));
 		SDT_PROBE4(sched, , , lend__pri, td, td->td_proc, prio, 
 		    curthread);
 	} 
 	THREAD_LOCK_ASSERT(td, MA_OWNED);
-	if (td->td_priority == prio)
+	if (td->td_priority.level == prio)
 		return;
 	/*
 	 * If the priority has been elevated due to priority
@@ -1885,9 +1885,9 @@ sched_thread_priority(struct thread *td, u_char prio)
 	 * queue.  This could be optimized to not re-add in some
 	 * cases.
 	 */
-	if (TD_ON_RUNQ(td) && prio < td->td_priority) {
+	if (TD_ON_RUNQ(td) && prio < td->td_priority.level) {
 		sched_rem(td);
-		td->td_priority = prio;
+		td->td_priority.level = prio;
 		sched_add(td, SRQ_BORROWING | SRQ_HOLDTD);
 		return;
 	}
@@ -1897,12 +1897,12 @@ sched_thread_priority(struct thread *td, u_char prio)
 	 */
 	if (TD_IS_RUNNING(td)) {
 		tdq = TDQ_CPU(td_get_sched(td)->ts_cpu);
-		oldpri = td->td_priority;
-		td->td_priority = prio;
+		oldpri = td->td_priority.level;
+		td->td_priority.level = prio;
 		tdq_thrprichange(tdq, oldpri, prio);
 		return;
 	}
-	td->td_priority = prio;
+	td->td_priority.level = prio;
 }
 
 /*
@@ -1930,11 +1930,11 @@ sched_unlend_prio(struct thread *td, u_char prio)
 {
 	u_char base_pri;
 
-	if (td->td_base_pri >= PRI_MIN_TIMESHARE &&
-	    td->td_base_pri <= PRI_MAX_TIMESHARE)
-		base_pri = td->td_user_pri;
+	if (td->td_base_pri.level >= PRI_MIN_TIMESHARE &&
+	    td->td_base_pri.level <= PRI_MAX_TIMESHARE)
+		base_pri = td->td_user_pri.level;
 	else
-		base_pri = td->td_base_pri;
+		base_pri = td->td_base_pri.level;
 	if (prio >= base_pri) {
 		td->td_flags &= ~TDF_BORROWING;
 		sched_thread_priority(td, base_pri);
@@ -1951,17 +1951,17 @@ sched_prio(struct thread *td, u_char prio)
 	u_char oldprio;
 
 	/* First, update the base priority. */
-	td->td_base_pri = prio;
+	td->td_base_pri.level = prio;
 
 	/*
 	 * If the thread is borrowing another thread's priority, don't
 	 * ever lower the priority.
 	 */
-	if (td->td_flags & TDF_BORROWING && td->td_priority < prio)
+	if (td->td_flags & TDF_BORROWING && td->td_priority.level < prio)
 		return;
 
 	/* Change the real priority. */
-	oldprio = td->td_priority;
+	oldprio = td->td_priority.level;
 	sched_thread_priority(td, prio);
 
 	/*
@@ -1980,7 +1980,7 @@ sched_ithread_prio(struct thread *td, u_char prio)
 {
 	THREAD_LOCK_ASSERT(td, MA_OWNED);
 	MPASS(td->td_pri_class == PRI_ITHD);
-	td->td_base_ithread_pri = prio;
+	td->td_base_ithread_pri.level = prio;
 	sched_prio(td, prio);
 }
 
@@ -1991,10 +1991,10 @@ void
 sched_user_prio(struct thread *td, u_char prio)
 {
 
-	td->td_base_user_pri = prio;
-	if (td->td_lend_user_pri <= prio)
+	td->td_base_user_pri.level = prio;
+	if (td->td_lend_user_pri.level <= prio)
 		return;
-	td->td_user_pri = prio;
+	td->td_user_pri.level = prio;
 }
 
 void
@@ -2002,11 +2002,11 @@ sched_lend_user_prio(struct thread *td, u_char prio)
 {
 
 	THREAD_LOCK_ASSERT(td, MA_OWNED);
-	td->td_lend_user_pri = prio;
-	td->td_user_pri = min(prio, td->td_base_user_pri);
-	if (td->td_priority > td->td_user_pri)
-		sched_prio(td, td->td_user_pri);
-	else if (td->td_priority != td->td_user_pri)
+	td->td_lend_user_pri.level = prio;
+	td->td_user_pri.level = min(prio, td->td_base_user_pri.level);
+	if (td->td_priority.level > td->td_user_pri.level)
+		sched_prio(td, td->td_user_pri.level);
+	else if (td->td_priority.level != td->td_user_pri.level)
 		ast_sched_locked(td, TDA_SCHED);
 }
 
@@ -2017,7 +2017,7 @@ void
 sched_lend_user_prio_cond(struct thread *td, u_char prio)
 {
 
-	if (td->td_lend_user_pri == prio)
+	if (td->td_lend_user_pri.level == prio)
 		return;
 
 	thread_lock(td);
@@ -2257,10 +2257,11 @@ sched_switch(struct thread *td, int flags)
 #if (KTR_COMPILE & KTR_SCHED) != 0
 	if (TD_IS_IDLETHREAD(td))
 		KTR_STATE1(KTR_SCHED, "thread", sched_tdname(td), "idle",
-		    "prio:%d", td->td_priority);
+		    "prio:%d", td->td_priority.level);
 	else
 		KTR_STATE3(KTR_SCHED, "thread", sched_tdname(td), KTDSTATE(td),
-		    "prio:%d", td->td_priority, "wmesg:\"%s\"", td->td_wmesg,
+		    "prio:%d", td->td_priority.level,
+		    "wmesg:\"%s\"", td->td_wmesg,
 		    "lockname:\"%s\"", td->td_lockname);
 #endif
 
@@ -2312,7 +2313,7 @@ sched_switch(struct thread *td, int flags)
 	    ("invalid count %d", curthread->td_md.md_spinlock_count));
 
 	KTR_STATE1(KTR_SCHED, "thread", sched_tdname(td), "running",
-	    "prio:%d", td->td_priority);
+	    "prio:%d", td->td_priority.level);
 }
 
 /*
@@ -2329,7 +2330,7 @@ sched_nice(struct proc *p, int nice)
 	FOREACH_THREAD_IN_PROC(p, td) {
 		thread_lock(td);
 		sched_priority(td);
-		sched_prio(td, td->td_base_user_pri);
+		sched_prio(td, td->td_base_user_pri.level);
 		thread_unlock(td);
 	}
 }
@@ -2348,7 +2349,7 @@ sched_sleep(struct thread *td, int prio)
 		return;
 	if (static_boost == 1 && prio)
 		sched_prio(td, prio);
-	else if (static_boost && td->td_priority > static_boost)
+	else if (static_boost && td->td_priority.level > static_boost)
 		sched_prio(td, static_boost);
 }
 
@@ -2384,8 +2385,8 @@ sched_wakeup(struct thread *td, int srqflags)
 	 * priority.
 	 */
 	if (PRI_BASE(td->td_pri_class) == PRI_ITHD &&
-	    td->td_priority != td->td_base_ithread_pri)
-		sched_prio(td, td->td_base_ithread_pri);
+	    td->td_priority.level != td->td_base_ithread_pri.level)
+		sched_prio(td, td->td_base_ithread_pri.level);
 
 	/*
 	 * Reset the slice value since we slept and advanced the round-robin.
@@ -2482,7 +2483,7 @@ sched_exit(struct proc *p, struct thread *child)
 	struct thread *td;
 
 	KTR_STATE1(KTR_SCHED, "thread", sched_tdname(child), "proc exit",
-	    "prio:%d", child->td_priority);
+	    "prio:%d", child->td_priority.level);
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 	td = FIRST_THREAD_IN_PROC(p);
 	sched_exit_thread(td, child);
@@ -2499,7 +2500,7 @@ sched_exit_thread(struct thread *td, struct thread *child)
 {
 
 	KTR_STATE1(KTR_SCHED, "thread", sched_tdname(child), "thread exit",
-	    "prio:%d", child->td_priority);
+	    "prio:%d", child->td_priority.level);
 	/*
 	 * Give the child's runtime to the parent without returning the
 	 * sleep time as a penalty to the parent.  This causes shells that
@@ -2523,7 +2524,7 @@ sched_preempt(struct thread *td)
 	thread_lock(td);
 	tdq = TDQ_SELF();
 	TDQ_LOCK_ASSERT(tdq, MA_OWNED);
-	if (td->td_priority > tdq->tdq_lowpri) {
+	if (td->td_priority.level > tdq->tdq_lowpri) {
 		if (td->td_critnest == 1) {
 			flags = SW_INVOL | SW_PREEMPT;
 			flags |= TD_IS_IDLETHREAD(td) ? SWT_REMOTEWAKEIDLE :
@@ -2550,11 +2551,11 @@ sched_userret_slowpath(struct thread *td)
 
 	thread_lock(td);
 
-	prio = td->td_priority;
-	usrprio = td->td_user_pri;
+	prio = td->td_priority.level;
+	usrprio = td->td_user_pri.level;
 
-	td->td_base_pri = usrprio;
-	td->td_priority = usrprio;
+	td->td_base_pri.level = usrprio;
+	td->td_priority.level = usrprio;
 	tdq_thrprichange(TDQ_SELF(), prio, usrprio);
 
 	thread_unlock(td);
@@ -2646,9 +2647,9 @@ sched_clock(struct thread *td, int cnt)
 		if (PRI_BASE(td->td_pri_class) == PRI_ITHD) {
 			SCHED_STAT_INC(ithread_preemptions);
 			td->td_owepreempt = 1;
-			if (td->td_base_pri + RQ_PPQ < PRI_MAX_ITHD) {
+			if (td->td_base_pri.level + RQ_PPQ < PRI_MAX_ITHD) {
 				SCHED_STAT_INC(ithread_demotions);
-				sched_prio(td, td->td_base_pri + RQ_PPQ);
+				sched_prio(td, td->td_base_pri.level + RQ_PPQ);
 			}
 		} else {
 			ast_sched_locked(td, TDA_SCHED);
@@ -2703,7 +2704,7 @@ sched_choose(void)
 	td = tdq_choose(tdq);
 	if (td != NULL) {
 		tdq_runq_rem(tdq, td);
-		tdq->tdq_lowpri = td->td_priority;
+		tdq->tdq_lowpri = td->td_priority.level;
 	} else { 
 		tdq->tdq_lowpri = PRI_MAX_IDLE;
 		td = PCPU_GET(idlethread);
@@ -2726,7 +2727,7 @@ sched_setpreempt(int pri)
 	ctd = curthread;
 	THREAD_LOCK_ASSERT(ctd, MA_OWNED);
 
-	cpri = ctd->td_priority;
+	cpri = ctd->td_priority.level;
 	if (pri < cpri)
 		ast_sched_locked(ctd, TDA_SCHED);
 	if (KERNEL_PANICKED() || pri >= cpri || cold || TD_IS_INHIBITED(ctd))
@@ -2756,8 +2757,8 @@ tdq_add(struct tdq *tdq, struct thread *td, int flags)
 	    ("sched_add: thread swapped out"));
 
 	lowpri = tdq->tdq_lowpri;
-	if (td->td_priority < lowpri)
-		tdq->tdq_lowpri = td->td_priority;
+	if (td->td_priority.level < lowpri)
+		tdq->tdq_lowpri = td->td_priority.level;
 	tdq_runq_add(tdq, td, flags);
 	tdq_load_add(tdq, td);
 	return (lowpri);
@@ -2778,7 +2779,7 @@ sched_add(struct thread *td, int flags)
 #endif
 
 	KTR_STATE2(KTR_SCHED, "thread", sched_tdname(td), "runq add",
-	    "prio:%d", td->td_priority, KTR_ATTR_LINKED,
+	    "prio:%d", td->td_priority.level, KTR_ATTR_LINKED,
 	    sched_tdname(curthread));
 	KTR_POINT1(KTR_SCHED, "thread", sched_tdname(curthread), "wokeup",
 	    KTR_ATTR_LINKED, sched_tdname(td));
@@ -2802,7 +2803,7 @@ sched_add(struct thread *td, int flags)
 	if (cpu != PCPU_GET(cpuid))
 		tdq_notify(tdq, lowpri);
 	else if (!(flags & SRQ_YIELDING))
-		sched_setpreempt(td->td_priority);
+		sched_setpreempt(td->td_priority.level);
 #else
 	tdq = TDQ_SELF();
 	/*
@@ -2818,7 +2819,7 @@ sched_add(struct thread *td, int flags)
 	}
 	(void)tdq_add(tdq, td, flags);
 	if (!(flags & SRQ_YIELDING))
-		sched_setpreempt(td->td_priority);
+		sched_setpreempt(td->td_priority.level);
 #endif
 	if (!(flags & SRQ_HOLDTD))
 		thread_unlock(td);
@@ -2835,7 +2836,7 @@ sched_rem(struct thread *td)
 	struct tdq *tdq;
 
 	KTR_STATE1(KTR_SCHED, "thread", sched_tdname(td), "runq rem",
-	    "prio:%d", td->td_priority);
+	    "prio:%d", td->td_priority.level);
 	SDT_PROBE3(sched, , , dequeue, td, td->td_proc, NULL);
 	tdq = TDQ_CPU(td_get_sched(td)->ts_cpu);
 	TDQ_LOCK_ASSERT(tdq, MA_OWNED);
@@ -2845,7 +2846,7 @@ sched_rem(struct thread *td)
 	tdq_runq_rem(tdq, td);
 	tdq_load_rem(tdq, td);
 	TD_SET_CAN_RUN(td);
-	if (td->td_priority == tdq->tdq_lowpri)
+	if (td->td_priority.level == tdq->tdq_lowpri)
 		tdq_setlowpri(tdq);
 }
 
@@ -3180,7 +3181,7 @@ sched_fork_exit(struct thread *td)
 	MPASS(td->td_lock == TDQ_LOCKPTR(tdq));
 	td->td_oncpu = cpuid;
 	KTR_STATE1(KTR_SCHED, "thread", sched_tdname(td), "running",
-	    "prio:%d", td->td_priority);
+	    "prio:%d", td->td_priority.level);
 	SDT_PROBE0(sched, , , on__cpu);
 }
 

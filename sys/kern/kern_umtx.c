@@ -110,9 +110,9 @@
  * if it is using 100%CPU, this is unfair to other processes.
  */
 
-#define UPRI(td)	(((td)->td_user_pri >= PRI_MIN_TIMESHARE &&\
-			  (td)->td_user_pri <= PRI_MAX_TIMESHARE) ?\
-			 PRI_MAX_TIMESHARE : (td)->td_user_pri)
+#define UPRI(td)	(((td)->td_user_pri.level >= PRI_MIN_TIMESHARE &&\
+			  (td)->td_user_pri.level <= PRI_MAX_TIMESHARE) ?\
+			 PRI_MAX_TIMESHARE : (td)->td_user_pri.level)
 
 #define	GOLDEN_RATIO_PRIME	2654404609U
 #ifndef	UMTX_CHAINS
@@ -1868,7 +1868,7 @@ umtx_propagate_priority(struct thread *td)
 		MPASS(td->td_proc->p_magic == P_MAGIC);
 
 		thread_lock(td);
-		if (td->td_lend_user_pri > pri)
+		if (td->td_lend_user_pri.level > pri)
 			sched_lend_user_prio(td, pri);
 		else {
 			thread_unlock(td);
@@ -2554,7 +2554,7 @@ do_lock_pp(struct thread *td, struct umutex *m, uint32_t flags,
 		}
 		new_pri = PRI_MIN_REALTIME + p1bprio_to_rtprio(ceiling);
 
-		if (td->td_base_user_pri < new_pri) {
+		if (td->td_base_user_pri.level < new_pri) {
 			error = EINVAL;
 			goto out;
 		}

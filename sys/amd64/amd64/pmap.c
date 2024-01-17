@@ -860,10 +860,10 @@ pmap_delayed_invl_start_u(void)
 	PMAP_ASSERT_NOT_IN_DI();
 	lock_delay_arg_init(&lda, &di_delay);
 	invl_gen->saved_pri = 0;
-	pri = td->td_base_pri;
+	pri = td->td_base_pri.level;
 	if (pri > PVM) {
 		thread_lock(td);
-		pri = td->td_base_pri;
+		pri = td->td_base_pri.level;
 		if (pri > PVM) {
 			invl_gen->saved_pri = pri;
 			sched_prio(td, PVM);

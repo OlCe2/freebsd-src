@@ -265,8 +265,8 @@ linux_synchronize_rcu_cb(ck_epoch_t *epoch __unused, ck_epoch_record_t *epoch_re
 		 * go anywhere while the current thread is locked.
 		 */
 		TAILQ_FOREACH(ts, &record->ts_head, rcu_entry[record->type]) {
-			if (ts->task_thread->td_priority > prio)
-				prio = ts->task_thread->td_priority;
+			if (ts->task_thread->td_priority.level > prio)
+				prio = ts->task_thread->td_priority.level;
 			is_sleeping |= (ts->task_thread->td_inhibitors != 0);
 		}
 
@@ -330,7 +330,7 @@ linux_synchronize_rcu(unsigned type)
 
 	old_cpu = PCPU_GET(cpuid);
 	old_pinned = td->td_pinned;
-	old_prio = td->td_priority;
+	old_prio = td->td_priority.level;
 	was_bound = sched_is_bound(td);
 	sched_unbind(td);
 	td->td_pinned = 0;

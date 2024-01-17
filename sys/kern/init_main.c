@@ -520,11 +520,11 @@ proc0_init(void *dummy __unused)
 	tidhash_add(td);
 	TD_SET_STATE(td, TDS_RUNNING);
 	td->td_pri_class = PRI_TIMESHARE;
-	td->td_user_pri = PUSER;
-	td->td_base_user_pri = PUSER;
-	td->td_lend_user_pri = PRI_MAX;
-	td->td_priority = PVM;
-	td->td_base_pri = PVM;
+	td->td_user_pri.level = PUSER;
+	td->td_base_user_pri.level = PUSER;
+	td->td_lend_user_pri.level = PRI_MAX;
+	td->td_priority.level = PVM;
+	td->td_base_pri.level = PVM;
 	td->td_oncpu = curcpu;
 	td->td_flags = TDF_INMEM;
 	td->td_pflags = TDP_KTHREAD;

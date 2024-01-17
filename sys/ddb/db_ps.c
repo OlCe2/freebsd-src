@@ -417,7 +417,7 @@ DB_SHOW_COMMAND(thread, db_show_thread)
 		    (uintmax_t)sbttobt(td->td_sleeptimo).frac,
 		    (long)sbttobt(sbinuptime()).sec,
 		    (uintmax_t)sbttobt(sbinuptime()).frac);
-	db_printf(" priority: %d\n", td->td_priority);
+	db_printf(" priority: %d\n", td->td_priority.level);
 	db_printf(" container lock: %s (%p)\n", lock->lo_name, lock);
 	if (td->td_swvoltick != 0) {
 		delta = ticks - td->td_swvoltick;

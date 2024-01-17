@@ -2568,7 +2568,7 @@ tdsigwakeup(struct thread *td, int sig, sig_t action, int intrval)
 	 * kernel processes.
 	 */
 	if (action == SIG_DFL && (prop & SIGPROP_KILL) != 0 &&
-	    td->td_priority > PUSER && !TD_IS_IDLETHREAD(td))
+	    td->td_priority.level > PUSER && !TD_IS_IDLETHREAD(td))
 		sched_prio(td, PUSER);
 	if (TD_ON_SLEEPQ(td)) {
 		/*
@@ -2607,7 +2607,7 @@ tdsigwakeup(struct thread *td, int sig, sig_t action, int intrval)
 		/*
 		 * Give low priority threads a better chance to run.
 		 */
-		if (td->td_priority > PUSER && !TD_IS_IDLETHREAD(td))
+		if (td->td_priority.level > PUSER && !TD_IS_IDLETHREAD(td))
 			sched_prio(td, PUSER);
 
 		sig_sleepq_abort(td, intrval);

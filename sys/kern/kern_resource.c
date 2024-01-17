@@ -922,7 +922,7 @@ _pri_get_locked(struct thread *const ttd,
 
 	THREAD_LOCK_ASSERT(ttd, MA_OWNED);
 	*class = ttd->td_pri_class;
-	*pri = ttd->td_user_pri;
+	*pri = ttd->td_user_pri.level;
 }
 
 static inline void

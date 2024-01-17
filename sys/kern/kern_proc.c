@@ -1294,8 +1294,8 @@ fill_kinfo_thread(struct thread *td, struct kinfo_proc *kp, int preferthread)
 
 	/* Things in the thread */
 	kp->ki_wchan = td->td_wchan;
-	kp->ki_pri.pri_level = td->td_priority;
-	kp->ki_pri.pri_native = td->td_base_pri;
+	kp->ki_pri.pri_level = td->td_priority.level;
+	kp->ki_pri.pri_native = td->td_base_pri.level;
 
 	/*
 	 * Note: legacy fields; clamp at the old NOCPU value and/or
@@ -1324,7 +1324,7 @@ fill_kinfo_thread(struct thread *td, struct kinfo_proc *kp, int preferthread)
 	kp->ki_kstack = (void *)td->td_kstack;
 	kp->ki_slptime = (ticks - td->td_slptick) / hz;
 	kp->ki_pri.pri_class = td->td_pri_class;
-	kp->ki_pri.pri_user = td->td_user_pri;
+	kp->ki_pri.pri_user = td->td_user_pri.level;
 
 	if (preferthread) {
 		rufetchtd(td, &kp->ki_rusage);

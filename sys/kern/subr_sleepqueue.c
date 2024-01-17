@@ -774,7 +774,7 @@ sleepq_resume_thread(struct sleepqueue *sq, struct thread *td, int pri,
 
 	/* Adjust priority if requested. */
 	MPASS(pri == 0 || (pri >= PRI_MIN && pri <= PRI_MAX));
-	if (pri != 0 && td->td_priority > pri &&
+	if (pri != 0 && td->td_priority.level > pri &&
 	    PRI_BASE(td->td_pri_class) == PRI_TIMESHARE)
 		sched_prio(td, pri);
 
@@ -964,7 +964,7 @@ sleepq_signal(const void *wchan, int flags, int pri, int queue)
 		 */
 		besttd = td = TAILQ_FIRST(head);
 		while ((td = TAILQ_NEXT(td, td_slpq)) != NULL) {
-			if (td->td_priority < besttd->td_priority)
+			if (td->td_priority.level < besttd->td_priority.level)
 				besttd = td;
 		}
 	}

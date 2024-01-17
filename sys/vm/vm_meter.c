@@ -190,7 +190,7 @@ vmtotal(SYSCTL_HANDLER_ARGS)
 				switch (TD_GET_STATE(td)) {
 				case TDS_INHIBITED:
 					if (TD_IS_SLEEPING(td)) {
-						if (td->td_priority <= PZERO)
+						if (td->td_priority.level <= PZERO)
 							total.t_dw++;
 						else
 							total.t_sl++;

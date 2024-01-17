@@ -365,12 +365,12 @@ runq_add(struct runq *rq, struct thread *td, int flags)
 	struct rqhead *rqh;
 	int pri;
 
-	pri = td->td_priority / RQ_PPQ;
+	pri = td->td_priority.level / RQ_PPQ;
 	td->td_rqindex = pri;
 	runq_setbit(rq, pri);
 	rqh = &rq->rq_queues[pri];
 	CTR4(KTR_RUNQ, "runq_add: td=%p pri=%d %d rqh=%p",
-	    td, td->td_priority, pri, rqh);
+	    td, td->td_priority.level, pri, rqh);
 	if (flags & SRQ_PREEMPTED) {
 		TAILQ_INSERT_HEAD(rqh, td, td_runq);
 	} else {
@@ -388,7 +388,7 @@ runq_add_pri(struct runq *rq, struct thread *td, u_char pri, int flags)
 	runq_setbit(rq, pri);
 	rqh = &rq->rq_queues[pri];
 	CTR4(KTR_RUNQ, "runq_add_pri: td=%p pri=%d idx=%d rqh=%p",
-	    td, td->td_priority, pri, rqh);
+	    td, td->td_priority.level, pri, rqh);
 	if (flags & SRQ_PREEMPTED) {
 		TAILQ_INSERT_HEAD(rqh, td, td_runq);
 	} else {
@@ -527,7 +527,7 @@ runq_remove_idx(struct runq *rq, struct thread *td, u_char *idx)
 	KASSERT(pri < RQ_NQS, ("runq_remove_idx: Invalid index %d\n", pri));
 	rqh = &rq->rq_queues[pri];
 	CTR4(KTR_RUNQ, "runq_remove_idx: td=%p, pri=%d %d rqh=%p",
-	    td, td->td_priority, pri, rqh);
+	    td, td->td_priority.level, pri, rqh);
 	TAILQ_REMOVE(rqh, td, td_runq);
 	if (TAILQ_EMPTY(rqh)) {
 		CTR0(KTR_RUNQ, "runq_remove_idx: empty");

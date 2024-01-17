@@ -202,7 +202,7 @@ propagate_priority(struct thread *td)
 	int pri;
 
 	THREAD_LOCK_ASSERT(td, MA_OWNED);
-	pri = td->td_priority;
+	pri = td->td_priority.level;
 	top = ts = td->td_blocked;
 	THREAD_LOCKPTR_ASSERT(td, &ts->ts_lock);
 
@@ -254,7 +254,7 @@ propagate_priority(struct thread *td)
 		 * If this thread already has higher priority than the
 		 * thread that is being blocked, we are finished.
 		 */
-		if (td->td_priority <= pri) {
+		if (td->td_priority.level <= pri) {
 			propagate_unlock_td(top, td);
 			return;
 		}
@@ -339,8 +339,8 @@ turnstile_adjust_thread(struct turnstile *ts, struct thread *td)
 	THREAD_LOCKPTR_BLOCKED_ASSERT(td, &ts->ts_lock);
 	td1 = TAILQ_PREV(td, threadqueue, td_lockq);
 	td2 = TAILQ_NEXT(td, td_lockq);
-	if ((td1 != NULL && td->td_priority < td1->td_priority) ||
-	    (td2 != NULL && td->td_priority > td2->td_priority)) {
+	if ((td1 != NULL && td->td_priority.level < td1->td_priority.level) ||
+	    (td2 != NULL && td->td_priority.level > td2->td_priority.level)) {
 		/*
 		 * Remove thread from blocked chain and determine where
 		 * it should be moved to.
@@ -351,7 +351,7 @@ turnstile_adjust_thread(struct turnstile *ts, struct thread *td)
 		TAILQ_REMOVE(&ts->ts_blocked[queue], td, td_lockq);
 		TAILQ_FOREACH(td1, &ts->ts_blocked[queue], td_lockq) {
 			MPASS(td1->td_proc->p_magic == P_MAGIC);
-			if (td1->td_priority > td->td_priority)
+			if (td1->td_priority.level > td->td_priority.level)
 				break;
 		}
 
@@ -466,7 +466,7 @@ turnstile_adjust(struct thread *td, u_char oldpri)
 	MPASS(td->td_tsqueue == TS_EXCLUSIVE_QUEUE ||
 	    td->td_tsqueue == TS_SHARED_QUEUE);
 	if (td == TAILQ_FIRST(&ts->ts_blocked[td->td_tsqueue]) &&
-	    td->td_priority < oldpri) {
+	    td->td_priority.level < oldpri) {
 		propagate_priority(td);
 	}
 }
@@ -689,7 +689,8 @@ turnstile_first_waiter(struct turnstile *ts)
 
 	std = TAILQ_FIRST(&ts->ts_blocked[TS_SHARED_QUEUE]);
 	xtd = TAILQ_FIRST(&ts->ts_blocked[TS_EXCLUSIVE_QUEUE]);
-	if (xtd == NULL || (std != NULL && std->td_priority < xtd->td_priority))
+	if (xtd == NULL || (std != NULL &&
+	    std->td_priority.level < xtd->td_priority.level))
 		return (std);
 	return (xtd);
 }
@@ -721,8 +722,8 @@ turnstile_claim(struct turnstile *ts)
 	 * Update the priority of the new owner if needed.
 	 */
 	thread_lock(owner);
-	if (td->td_priority < owner->td_priority)
-		sched_lend_prio(owner, td->td_priority);
+	if (td->td_priority.level < owner->td_priority.level)
+		sched_lend_prio(owner, td->td_priority.level);
 	thread_unlock(owner);
 	tc = TC_LOOKUP(ts->ts_lockobj);
 	mtx_unlock_spin(&ts->ts_lock);
@@ -780,7 +781,7 @@ turnstile_wait(struct turnstile *ts, struct thread *owner, int queue)
 		mtx_unlock_spin(&td_contested_lock);
 	} else {
 		TAILQ_FOREACH(td1, &ts->ts_blocked[queue], td_lockq)
-			if (td1->td_priority > td->td_priority)
+			if (td1->td_priority.level > td->td_priority.level)
 				break;
 		mtx_lock_spin(&td_contested_lock);
 		if (td1 != NULL)
@@ -931,7 +932,7 @@ turnstile_calc_unlend_prio_locked(struct thread *td)
 
 	pri = PRI_MAX;
 	LIST_FOREACH(nts, &td->td_contested, ts_link) {
-		cp = turnstile_first_waiter(nts)->td_priority;
+		cp = turnstile_first_waiter(nts)->td_priority.level;
 		if (cp < pri)
 			pri = cp;
 	}

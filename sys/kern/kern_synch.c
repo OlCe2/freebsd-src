@@ -608,7 +608,7 @@ ast_scheduler(struct thread *td, int tda __unused)
 		ktrcsw(1, 1, __func__);
 #endif
 	thread_lock(td);
-	sched_prio(td, td->td_user_pri);
+	sched_prio(td, td->td_user_pri.level);
 	mi_switch(SW_INVOL | SWT_NEEDRESCHED);
 #ifdef KTRACE
 	if (KTRPOINT(td, KTR_CSW))
@@ -650,7 +650,7 @@ kern_yield(int prio)
 	DROP_GIANT();
 	thread_lock(td);
 	if (prio == PRI_USER)
-		prio = td->td_user_pri;
+		prio = td->td_user_pri.level;
 	if (prio >= 0)
 		sched_prio(td, prio);
 	mi_switch(SW_VOL | SWT_RELINQUISH);

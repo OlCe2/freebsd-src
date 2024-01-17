@@ -467,7 +467,7 @@ do_fork(struct thread *td, struct fork_req *fr, struct proc *p2, struct thread *
 	bcopy(&p2->p_comm, &td2->td_name, sizeof(td2->td_name));
 	td2->td_sigstk = td->td_sigstk;
 	td2->td_flags = TDF_INMEM;
-	td2->td_lend_user_pri = PRI_MAX;
+	td2->td_lend_user_pri.level = PRI_MAX;
 
 #ifdef VIMAGE
 	td2->td_vnet = NULL;

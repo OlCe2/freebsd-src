@@ -741,7 +741,7 @@ statclock(int cnt, int usermode)
 	if (ru->ru_maxrss < rss)
 		ru->ru_maxrss = rss;
 	KTR_POINT2(KTR_SCHED, "thread", sched_tdname(td), "statclock",
-	    "prio:%d", td->td_priority, "stathz:%d", (stathz)?stathz:hz);
+	    "prio:%d", td->td_priority.level, "stathz:%d", (stathz)?stathz:hz);
 	SDT_PROBE2(sched, , , tick, td, td->td_proc);
 	thread_lock_flags(td, MTX_QUIET);
 
