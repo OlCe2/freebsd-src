@@ -192,7 +192,8 @@ vmtotal(SYSCTL_HANDLER_ARGS)
 					if (TD_IS_SWAPPED(td))
 						total.t_sw++;
 					else if (TD_IS_SLEEPING(td)) {
-						if (td->td_priority <= PZERO)
+						if (td->td_priority.level <=
+						    PZERO)
 							total.t_dw++;
 						else
 							total.t_sl++;

@@ -479,7 +479,7 @@ _epoch_enter_preempt(epoch_t epoch, epoch_tracker_t et EPOCH_FILE_LINE)
 	THREAD_NO_SLEEPING();
 	critical_enter();
 	sched_pin();
-	et->et_old_priority = td->td_priority;
+	et->et_old_priority = td->td_priority.level;
 	er = epoch_currecord(epoch);
 	/* Record-level tracking is reserved for non-preemptible epochs. */
 	MPASS(er->er_td == NULL);
@@ -532,7 +532,7 @@ _epoch_exit_preempt(epoch_t epoch, epoch_tracker_t et EPOCH_FILE_LINE)
 	ck_epoch_end(&er->er_record, &et->et_section);
 	TAILQ_REMOVE(&er->er_tdlist, et, et_link);
 	er->er_gen++;
-	if (__predict_false(et->et_old_priority != td->td_priority))
+	if (__predict_false(et->et_old_priority != td->td_priority.level))
 		epoch_adjust_prio(td, et->et_old_priority);
 	critical_exit();
 #ifdef EPOCH_TRACE
@@ -642,11 +642,12 @@ epoch_block_handler_preempt(struct ck_epoch *global __unused,
 		 * restore on exit from epoch_wait().
 		 */
 		curwaittd = tdwait->et_td;
-		if (!TD_IS_INHIBITED(curwaittd) && curwaittd->td_priority > td->td_priority) {
+		if (!TD_IS_INHIBITED(curwaittd) &&
+		    curwaittd->td_priority.level > td->td_priority.level) {
 			critical_enter();
 			thread_unlock(td);
 			thread_lock(curwaittd);
-			sched_prio(curwaittd, td->td_priority);
+			sched_prio(curwaittd, td->td_priority.level);
 			thread_unlock(curwaittd);
 			thread_lock(td);
 			critical_exit();
@@ -725,7 +726,7 @@ epoch_wait_preempt(epoch_t epoch)
 
 	old_cpu = PCPU_GET(cpuid);
 	old_pinned = td->td_pinned;
-	old_prio = td->td_priority;
+	old_prio = td->td_priority.level;
 	was_bound = sched_is_bound(td);
 	sched_unbind(td);
 	td->td_pinned = 0;

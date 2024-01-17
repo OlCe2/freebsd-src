@@ -81,7 +81,7 @@ int	sched_load(void);
 int	sched_rr_interval(void);
 int	sched_runnable(void);
 
-/* 
+/*
  * Proc related scheduling hooks.
  */
 void	sched_exit(struct proc *p, struct thread *childtd);
@@ -131,7 +131,7 @@ sched_userret(struct thread *td)
 	 */
 	KASSERT((td->td_flags & TDF_BORROWING) == 0,
 	    ("thread with borrowed priority returning to userland"));
-	if (__predict_false(td->td_priority != td->td_user_pri))
+	if (__predict_false(td->td_priority.level != td->td_user_pri.level))
 		sched_userret_slowpath(td);
 }
 

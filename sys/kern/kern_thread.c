@@ -82,9 +82,9 @@
  * structures.
  */
 #ifdef __amd64__
-_Static_assert(offsetof(struct thread, td_flags) == 0x108,
+_Static_assert(offsetof(struct thread, td_flags) == 0x100,
     "struct thread KBI td_flags");
-_Static_assert(offsetof(struct thread, td_pflags) == 0x114,
+_Static_assert(offsetof(struct thread, td_pflags) == 0x10c,
     "struct thread KBI td_pflags");
 _Static_assert(offsetof(struct thread, td_frame) == 0x4b8,
     "struct thread KBI td_frame");
@@ -393,7 +393,7 @@ thread_ctor(void *mem, int size, void *arg, int flags)
 	 * end of a context switch.
 	 */
 	td->td_critnest = 1;
-	td->td_lend_user_pri = PRI_MAX;
+	td->td_lend_user_pri.level = PRI_MAX;
 #ifdef AUDIT
 	audit_thread_alloc(td);
 #endif

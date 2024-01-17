@@ -330,7 +330,7 @@ cf_set_method(device_t dev, const struct cf_level *level, int priority)
 			goto out;
 		}
 		thread_lock(curthread);
-		pri = curthread->td_priority;
+		pri = curthread->td_priority.level;
 		sched_prio(curthread, PRI_MIN);
 		sched_bind(curthread, pc->pc_cpuid);
 		thread_unlock(curthread);
@@ -357,7 +357,7 @@ cf_set_method(device_t dev, const struct cf_level *level, int priority)
 		/* Bind to the target CPU before switching. */
 		pc = cpu_get_pcpu(set->dev);
 		thread_lock(curthread);
-		pri = curthread->td_priority;
+		pri = curthread->td_priority.level;
 		sched_prio(curthread, PRI_MIN);
 		sched_bind(curthread, pc->pc_cpuid);
 		thread_unlock(curthread);

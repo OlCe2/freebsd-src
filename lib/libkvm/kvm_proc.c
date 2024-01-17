@@ -435,8 +435,8 @@ nopgrp:
 					kp->ki_stat = SIDL;
 				}
 				/* Stuff from the thread */
-				kp->ki_pri.pri_level = mtd.td_priority;
-				kp->ki_pri.pri_native = mtd.td_base_pri;
+				kp->ki_pri.pri_level = mtd.td_priority.level;
+				kp->ki_pri.pri_native = mtd.td_base_pri.level;
 				kp->ki_lastcpu = mtd.td_lastcpu;
 				kp->ki_wchan = mtd.td_wchan;
 				kp->ki_oncpu = mtd.td_oncpu;

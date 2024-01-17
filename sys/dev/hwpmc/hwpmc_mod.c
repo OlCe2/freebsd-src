@@ -748,7 +748,7 @@ pmc_save_cpu_binding(struct pmc_binding *pb)
 	thread_lock(curthread);
 	pb->pb_bound = sched_is_bound(curthread);
 	pb->pb_cpu   = curthread->td_oncpu;
-	pb->pb_priority = curthread->td_priority;
+	pb->pb_priority = curthread->td_priority.level;
 	thread_unlock(curthread);
 	PMCDBG1(CPU,BND,2, "save-cpu cpu=%d", pb->pb_cpu);
 }

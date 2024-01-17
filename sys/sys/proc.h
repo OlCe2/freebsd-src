@@ -251,9 +251,6 @@ struct thread {
 	lwpid_t		td_tid;		/* (b) Thread ID. */
 	sigqueue_t	td_sigqueue;	/* (c) Sigs arrived, not delivered. */
 #define	td_siglist	td_sigqueue.sq_signals
-	u_char		td_lend_user_pri; /* (t) Lend user pri. */
-	u_char		td_allocdomain;	/* (b) NUMA domain backing this struct thread. */
-	u_char		td_base_ithread_pri; /* (t) Base ithread pri */
 	struct kmsan_td	*td_kmsan;	/* (k) KMSAN state */
 
 /* Cleared during fork1(), thread_create(), or kthread_add(). */
@@ -267,9 +264,6 @@ struct thread {
 	int		td_sqqueue;	/* (t) Sleepqueue queue blocked on. */
 	const void	*td_wchan;	/* (t) Sleep address. */
 	const char	*td_wmesg;	/* (t) Reason for sleep. */
-	volatile u_char td_owepreempt;  /* (k*) Preempt on last critical_exit */
-	u_char		td_tsqueue;	/* (t) Turnstile queue blocked on. */
-	u_char		_td_pad0[2];	/* Available. */
 	int		td_locks;	/* (k) Debug: count of non-spin locks */
 	int		td_rw_rlocks;	/* (k) Count of rwlock read locks. */
 	int		td_sx_slocks;	/* (k) Count of sx shared locks. */
@@ -326,12 +320,18 @@ struct thread {
 /* Copied during fork1(), thread_create(), or kthread_add(). */
 #define	td_startcopy td_endzero
 	sigset_t	td_sigmask;	/* (c) Current signal mask. */
-	u_char		td_rqindex;	/* (t) Run queue index. */
-	u_char		td_base_pri;	/* (t) Thread base kernel priority. */
-	u_char		td_priority;	/* (t) Thread active priority. */
+	struct prio	td_base_ithread_pri; /* (t) Base ithread pri. */
+	struct prio	td_base_pri;	/* (t) Thread base kernel priority. */
+	struct prio	td_kern_pri;	/* (t) Kernel current priority. */
+	struct prio	td_base_user_pri; /* (t) Base user pri */
+	struct prio	td_lend_user_pri; /* (t) Lend user pri. */
+	struct prio	td_user_pri;	/* (t) User current priority. */
+	struct prio	td_priority;	/* (t) Currently active priority. */
 	u_char		td_pri_class;	/* (t) Scheduling class. */
-	u_char		td_user_pri;	/* (t) User pri from estcpu and nice. */
-	u_char		td_base_user_pri; /* (t) Base user pri */
+	u_char		td_rqindex;	/* (t) Run queue index. */
+	u_char		td_tsqueue;	/* (t) Turnstile queue blocked on. */
+	u_char		td_allocdomain;	/* (b) NUMA domain backing this struct thread. */
+	volatile u_char td_owepreempt;  /* (k*) Preempt on last critical_exit */
 	uintptr_t	td_rb_list;	/* (k) Robust list head. */
 	uintptr_t	td_rbp_list;	/* (k) Robust priv list head. */
 	uintptr_t	td_rb_inact;	/* (k) Current in-action mutex loc. */

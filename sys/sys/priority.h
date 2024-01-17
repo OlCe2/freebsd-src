@@ -136,4 +136,9 @@ struct priority {
 	u_char	pri_user;	/* User priority based on p_cpu and p_nice. */
 };
 
+struct prio {
+	u_char level;
+	u_char flags;
+};
+
 #endif	/* !_SYS_PRIORITY_H_ */
