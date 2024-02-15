@@ -73,7 +73,7 @@ _pthread_setschedparam(pthread_t pthread, int policy,
 	if (attr->policy == cand_attr.policy &&
 	    attr->priority == cand_attr.priority)
 		error = 0;
-	else if (policy == SCHED_OTHER && attr->policy == policy) {
+	else if (policy == SCHED_TIMESHARE && attr->policy == policy) {
 		*attr = cand_attr;
 		error = 0;
 	} else {

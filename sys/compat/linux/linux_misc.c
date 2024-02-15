@@ -1248,7 +1248,7 @@ posix_prio_from_linux(int policy, struct sched_param *params)
 {
 
 	switch (policy) {
-	case SCHED_OTHER:
+	case SCHED_TIMESHARE:
 		if (params->sched_priority != 0)
 			break;
 
@@ -1295,10 +1295,10 @@ sched_policy_from_linux(int linux_policy, int *policy)
 
 	switch (linux_policy) {
 	case LINUX_SCHED_NORMAL:
-		*policy = SCHED_OTHER;
+		*policy = SCHED_TIMESHARE;
 		break;
 	case LINUX_SCHED_BATCH:
-		*policy = SCHED_OTHER;
+		*policy = SCHED_TIMESHARE;
 		break;
 	case LINUX_SCHED_IDLE:
 		*policy = SCHED_IDLE;
@@ -1357,7 +1357,7 @@ sched_policy_to_linux(int policy, int *linux_policy)
 {
 
 	switch (policy) {
-	case SCHED_OTHER:
+	case SCHED_TIMESHARE:
 		*linux_policy = LINUX_SCHED_NORMAL;
 		break;
 	case SCHED_IDLE:
@@ -1928,7 +1928,7 @@ posix_prio_to_linux(int policy, struct sched_param *params)
 {
 
 	switch (policy) {
-	case SCHED_OTHER:
+	case SCHED_TIMESHARE:
 	case SCHED_IDLE:
 		/* Linux admits a single valid priority for these policies. */
 		params->sched_priority = 0;

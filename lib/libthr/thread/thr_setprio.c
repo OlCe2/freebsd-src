@@ -53,7 +53,7 @@ _pthread_setprio(pthread_t pthread, int prio)
 	attr = &pthread->attr.sched_attr;
 	if (attr->priority == prio)
 		error = 0;
-	else if (attr->policy == SCHED_OTHER) {
+	else if (attr->policy == SCHED_TIMESHARE) {
 		attr->priority = prio;
 		error = 0;
 	} else {
