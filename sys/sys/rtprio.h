@@ -114,7 +114,8 @@ typedef	__pid_t		pid_t;
 #define RTP_PRIO_ITHD		1
 #define RTP_PRIO_FIFO		10	/* (RTP_PRIO_REALTIME | (1 << 3)) */
 #define RTP_PRIO_REALTIME	2	/* Realtime process. */
-#define RTP_PRIO_NORMAL		3	/* Time sharing process. */
+#define RTP_PRIO_TIMESHARE	3	/* Time sharing process. */
+#define RTP_PRIO_NORMAL		RTP_PRIO_TIMESHARE /* Compatibility alias. */
 #define RTP_PRIO_IDLE		4	/* Idle process. */
 
 /*

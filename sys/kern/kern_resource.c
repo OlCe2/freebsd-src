@@ -329,7 +329,7 @@ _Static_assert(P1B_RT_PRIO_MAX - P1B_RT_PRIO_MIN + 1 >= 32,
     "POSIX mandates at least 32 priorities in the realtime range");
 
 /*
- * Priority range for the RTP_PRIO_NORMAL type.
+ * Priority range for the RTP_PRIO_TIMESHARE type.
  *
  * These macros are not "public" because they depend on some priority internals.
  * They are going to be replaced by a stable interface.
@@ -368,7 +368,7 @@ rtp_is_valid(const struct rtprio *const rtp)
 		if (RTP_PRIO_IS_IN_RANGE(rtp->prio))
 			return (0);
 		break;
-	case RTP_PRIO_NORMAL:
+	case RTP_PRIO_TIMESHARE:
 		if (TS_PRIO_IS_IN_RANGE(rtp->prio))
 			return (0);
 		break;
@@ -420,7 +420,7 @@ rtp_can_set_prio(struct thread *const td, const struct rtprio *const rtp)
 			return (0);
 		break;
 
-	case RTP_PRIO_NORMAL:
+	case RTP_PRIO_TIMESHARE:
 		return (0);
 	}
 
@@ -772,7 +772,7 @@ posix_sched_to_rtp(const struct sched_attr *const sched_attr,
 		    sched_attr->priority, rtp);
 		break;
 	case SCHED_OTHER:
-		rtp->type = RTP_PRIO_NORMAL;
+		rtp->type = RTP_PRIO_TIMESHARE;
 		rtp->prio = 0;
 		error = 0;
 		break;
@@ -817,7 +817,7 @@ rtp_to_posix_sched(const struct rtprio *const rtp,
 	case RTP_PRIO_REALTIME:
 		return (check_convert_rt_range_to_p1bprio(SCHED_RR,
 		    rtp->prio, sched_attr));
-	case RTP_PRIO_NORMAL:
+	case RTP_PRIO_TIMESHARE:
 		sched_attr->policy = SCHED_OTHER;
 		sched_attr->priority = 0;
 		return (0);
@@ -842,7 +842,7 @@ rtp_to_posix_sched(const struct rtprio *const rtp,
 _PRI_CLASS_CONVERSION_ASSERT(RTP_PRIO_ITHD, PRI_ITHD);
 _PRI_CLASS_CONVERSION_ASSERT(RTP_PRIO_FIFO, PRI_FIFO);
 _PRI_CLASS_CONVERSION_ASSERT(RTP_PRIO_REALTIME, PRI_REALTIME);
-_PRI_CLASS_CONVERSION_ASSERT(RTP_PRIO_NORMAL, PRI_TIMESHARE);
+_PRI_CLASS_CONVERSION_ASSERT(RTP_PRIO_TIMESHARE, PRI_TIMESHARE);
 _PRI_CLASS_CONVERSION_ASSERT(RTP_PRIO_IDLE, PRI_IDLE);
 
 #undef _PRI_CLASS_CONVERSION_ASSERT
@@ -943,7 +943,7 @@ _pri_get(struct thread *const ttd, u_char *const class, u_char *const pri)
 _Static_assert(PRI_MAX_REALTIME - PRI_MIN_REALTIME + 1 == RTP_PRIO_RANGE_SIZE,
     "Code assumes one internal priority level per RTP_PRIO_REALTIME level.");
 _Static_assert(PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE + 1 == TS_PRIO_RANGE_SIZE,
-    "Code assumes one internal priority level per RTP_PRIO_NORMAL level.");
+    "Code assumes one internal priority level per RTP_PRIO_TIMESHARE level.");
 _Static_assert(PRI_MAX_IDLE - PRI_MIN_IDLE + 1 == RTP_PRIO_RANGE_SIZE,
     "Code assumes one internal priority level per RTP_PRIO_IDLE level.");
 
@@ -1017,7 +1017,7 @@ _rtp_to_pri(const struct rtprio *const rtp,
 	case RTP_PRIO_REALTIME:
 		*pri = PRI_MIN_REALTIME + rtp->prio;
 		break;
-	case RTP_PRIO_NORMAL:
+	case RTP_PRIO_TIMESHARE:
 		*pri = PRI_MIN_TIMESHARE + rtp->prio;
 		break;
 	case RTP_PRIO_IDLE:

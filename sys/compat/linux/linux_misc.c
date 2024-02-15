@@ -2814,11 +2814,11 @@ linux_rtprio2ioprio(struct rtprio *rtp, int *ioprio)
 		/* Linux doesn't support a value for this class. */
 		*ioprio = LINUX_IOPRIO_PRIO(LINUX_IOPRIO_CLASS_IDLE, 0);
 		break;
-	case RTP_PRIO_NORMAL:
+	case RTP_PRIO_TIMESHARE:
 		/*
-		 * Wrong: Normal type priority values were never the same as
+		 * Wrong: Timeshare type priority values were never the same as
 		 * that of the FIFO or realtime types.  To be fixed after
-		 * changing normal prio semantics.
+		 * changing semantics.
 		 */
 		*ioprio = LINUX_IOPRIO_PRIO(LINUX_IOPRIO_CLASS_BE,
 		    rtprio_to_linux_ioprio(rtp->prio));
@@ -2848,11 +2848,11 @@ linux_ioprio2rtprio(int ioprio, struct rtprio *rtp)
 		rtp->prio = (RTP_PRIO_MIN + RTP_PRIO_MAX) / 2;
 		break;
 	case LINUX_IOPRIO_CLASS_BE:
-		rtp->type = RTP_PRIO_NORMAL;
+		rtp->type = RTP_PRIO_TIMESHARE;
 		/*
-		 * Wrong: Normal type priority values were never the same as
+		 * Wrong: Timeshare type priority values were never the same as
 		 * that of the FIFO or realtime types.  To be fixed after
-		 * changing normal prio semantics.
+		 * changing semantics.
 		 */
 		rtp->prio =
 		    linux_ioprio_to_rtprio(LINUX_IOPRIO_PRIO_DATA(ioprio));

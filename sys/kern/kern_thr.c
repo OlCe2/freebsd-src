@@ -275,8 +275,8 @@ thr_new_set_sched(struct thread *const td, struct thread *const new_td,
 			break;
 
 		if (!(new_td->td_pri_class == PRI_TIMESHARE &&
-		    rtp->type == RTP_PRIO_NORMAL)) {
-			if (rtp->type == RTP_PRIO_NORMAL)
+		    rtp->type == RTP_PRIO_TIMESHARE)) {
+			if (rtp->type == RTP_PRIO_TIMESHARE)
 				rtp->prio = 0;
 			/* Currently can't fail (user threads). */
 			error = rtp_set_thread(td, rtp, new_td);
