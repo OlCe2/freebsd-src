@@ -173,7 +173,7 @@ ksched_get_priority_max(struct ksched *ksched, int policy, int *prio)
 	case SCHED_IDLE:
 		*prio = P1B_RT_PRIO_MAX;
 		break;
-	case SCHED_OTHER:
+	case SCHED_TIMESHARE:
 		*prio = P1B_TS_PRIO_MAX;
 		break;
 	default:
@@ -193,7 +193,7 @@ ksched_get_priority_min(struct ksched *ksched, int policy, int *prio)
 	case SCHED_IDLE:
 		*prio = P1B_RT_PRIO_MIN;
 		break;
-	case SCHED_OTHER:
+	case SCHED_TIMESHARE:
 		*prio = P1B_TS_PRIO_MIN;
 		break;
 	default:

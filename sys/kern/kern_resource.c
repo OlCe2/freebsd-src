@@ -771,7 +771,7 @@ posix_sched_to_rtp(const struct sched_attr *const sched_attr,
 		error = check_convert_p1bprio_to_rt_range(RTP_PRIO_REALTIME,
 		    sched_attr->priority, rtp);
 		break;
-	case SCHED_OTHER:
+	case SCHED_TIMESHARE:
 		rtp->type = RTP_PRIO_TIMESHARE;
 		rtp->prio = 0;
 		error = 0;
@@ -818,7 +818,7 @@ rtp_to_posix_sched(const struct rtprio *const rtp,
 		return (check_convert_rt_range_to_p1bprio(SCHED_RR,
 		    rtp->prio, sched_attr));
 	case RTP_PRIO_TIMESHARE:
-		sched_attr->policy = SCHED_OTHER;
+		sched_attr->policy = SCHED_TIMESHARE;
 		sched_attr->priority = 0;
 		return (0);
 	case RTP_PRIO_IDLE:

@@ -306,7 +306,8 @@ struct sched_attr_v1 {
  */
 #define SCHED_NONE      0	/* FreeBSD extension, see above. */
 #define SCHED_FIFO      1
-#define SCHED_OTHER     2
+#define SCHED_TIMESHARE 2	/* FreeBSD extension. */
+#define SCHED_OTHER     SCHED_TIMESHARE /* Default policy is timesharing. */
 #define SCHED_RR        3
 #define SCHED_IDLE      4	/* FreeBSD extension. */
 #define SCHED_CURRENT   0xFFFF	/* FreeBSD extension, see above. */

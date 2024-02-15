@@ -370,7 +370,7 @@ cond_wait_common(pthread_cond_t *cond, pthread_mutex_t *mutex,
 	if ((error = _mutex_owned(curthread, mp)) != 0)
 		return (error);
 
-	if (curthread->attr.sched_attr.policy != SCHED_OTHER ||
+	if (curthread->attr.sched_attr.policy != SCHED_TIMESHARE ||
 	    (mp->m_lock.m_flags & (UMUTEX_PRIO_PROTECT | UMUTEX_PRIO_INHERIT |
 	    USYNC_PROCESS_SHARED)) != 0 || CV_PSHARED(cvp))
 		return (cond_wait_kernel(cvp, mp, abstime, cancel));
