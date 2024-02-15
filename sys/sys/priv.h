@@ -184,7 +184,8 @@
  * Scheduling privileges.
  */
 #define	PRIV_SCHED_DIFFCRED	200	/* Exempt scheduling other users. */
-#define	PRIV_SCHED_SETPRIORITY	201	/* Can set lower nice value for proc. */
+#define	PRIV_SCHED_RAISEPRIO	201	/* Can increase (thr/proc) priority. */
+#define	PRIV_SCHED_SETPRIORITY	PRIV_SCHED_RAISEPRIO /* Compatibility alias. */
 #define	PRIV_SCHED_RTPRIO	202	/* Can set real time scheduling. */
 #define	_PRIV_SCHED_SETPOLICY	203	/* Removed. */
 #define	_PRIV_SCHED_SET		204	/* Removed. */

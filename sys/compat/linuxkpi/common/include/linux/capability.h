@@ -40,7 +40,7 @@
 #include <sys/priv.h>
 
 #define	CAP_SYS_ADMIN		PRIV_DRIVER
-#define	CAP_SYS_NICE		PRIV_SCHED_SETPRIORITY
+#define	CAP_SYS_NICE		PRIV_SCHED_RAISEPRIO
 
 static inline bool
 capable(const int tryme)

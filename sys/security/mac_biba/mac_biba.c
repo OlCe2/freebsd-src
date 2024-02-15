@@ -1969,7 +1969,7 @@ biba_priv_check(struct ucred *cred, int priv)
 	 * integrity processes can deny CPU to higher integrity ones.
 	 */
 	case PRIV_SCHED_DIFFCRED:
-	case PRIV_SCHED_SETPRIORITY:
+	case PRIV_SCHED_RAISEPRIO:
 	case PRIV_SCHED_RTPRIO:
 	case PRIV_SCHED_IDPRIO:
 
