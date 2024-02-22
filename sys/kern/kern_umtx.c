@@ -2535,7 +2535,8 @@ do_lock_pp(struct thread *td, struct umutex *m, uint32_t flags,
 	if (timeout != NULL)
 		umtx_abs_timeout_init2(&timo, timeout);
 
-	su = (priv_check(td, PRIV_SCHED_RTPRIO) == 0);
+	su = priv_check(td, PRIV_SCHED_RTPRIO) == 0 &&
+	    priv_check(td, PRIV_SCHED_RAISEPRIO) == 0;
 	for (;;) {
 		old_inherited_pri = uq->uq_inherited_pri;
 		umtxq_lock(&uq->uq_key);
@@ -2689,11 +2690,12 @@ do_unlock_pp(struct thread *td, struct umutex *m, uint32_t flags, bool rb)
 	struct umtx_pi *pi;
 	uint32_t id, owner, rceiling;
 	int error, pri, new_inherited_pri;
-	bool su;
+	bool rtprio_priv, raiseprio_priv;
 
 	id = td->td_tid;
 	uq = td->td_umtxq;
-	su = (priv_check(td, PRIV_SCHED_RTPRIO) == 0);
+	rtprio_priv = priv_check(td, PRIV_SCHED_RTPRIO) == 0;
+	raiseprio_priv = priv_check(td, PRIV_SCHED_RAISEPRIO) == 0;
 
 	/*
 	 * Make sure we own this mtx.
@@ -2714,8 +2716,8 @@ do_unlock_pp(struct thread *td, struct umutex *m, uint32_t flags, bool rb)
 	else {
 		if (!P1B_PRIO_IS_IN_RT_RANGE(rceiling))
 			return (EINVAL);
-		rceiling = p1bprio_to_rtprio(rceiling);
-		new_inherited_pri = PRI_MIN_REALTIME + rceiling;
+		new_inherited_pri = !rtprio_priv ? PRI_MAX :
+		    PRI_MIN_REALTIME + p1bprio_to_rtprio(rceiling);
 	}
 
 	if ((error = umtx_key_get(m, (flags & UMUTEX_ROBUST) != 0 ?
@@ -2744,7 +2746,8 @@ do_unlock_pp(struct thread *td, struct umutex *m, uint32_t flags, bool rb)
 		error = EFAULT;
 	else {
 		mtx_lock(&umtx_lock);
-		if (su || new_inherited_pri == PRI_MAX)
+		if (new_inherited_pri == PRI_MAX || raiseprio_priv ||
+		    uq->uq_inherited_pri < new_inherited_pri)
 			uq->uq_inherited_pri = new_inherited_pri;
 		pri = PRI_MAX;
 		TAILQ_FOREACH(pi, &uq->uq_pi_contested, pi_link) {
