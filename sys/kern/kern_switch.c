@@ -57,8 +57,6 @@
 #endif
 #endif
 
-CTASSERT((RQB_BPW * RQB_LEN) == RQ_NQS);
-
 /*
  * kern.sched.preemption allows user space to determine if preemption support
  * is compiled in or not.  It is not currently a boot or runtime flag that
@@ -253,6 +251,8 @@ critical_exit_KBI(void)
 /************************************************************************
  * SYSTEM RUN QUEUE manipulations and tests				*
  ************************************************************************/
+_Static_assert(RQB_BPW == (1 << RQB_L2BPW),
+    "RQB_L2BPW and RQB_BPW / 'rqb_word_t' mismatch");
 /*
  * Initialize a run structure.
  */

@@ -29,16 +29,43 @@
 #ifndef	_RUNQ_H_
 #define	_RUNQ_H_
 
-#include <machine/runq.h>
-
 struct thread;
 
 /*
  * Run queue parameters.
  */
 
-#define	RQ_NQS		(64)		/* Number of run queues. */
-#define	RQ_PPQ		(4)		/* Priorities per queue. */
+#define	RQ_MAX_PRIO	(255)	/* Maximum priority (minimum is 0). */
+#define	RQ_PPQ		(4)	/* Priorities per queue. */
+
+/*
+ * Convenience macros from <sys/param.h>.
+ */
+#ifndef	NBBY
+#define	NBBY 8
+#endif
+#ifndef	howmany
+#define	howmany(x, y)	(((x)+((y)-1))/(y))
+#endif
+
+/*
+ * Deduced from the above parameters and machine ones.
+ */
+#if defined(_LP64)
+#define	RQB_L2BPW	(6)		/* Log2(sizeof(rqb_word_t) * NBBY)). */
+#elif defined(_ILP32)
+#define	RQB_L2BPW	(5)		/* Log2(sizeof(rqb_word_t) * NBBY)). */
+#else
+#error Not _LP64 nor _ILP32!
+#endif
+typedef	unsigned long	rqb_word_t;	/* runq's status words type. */
+
+#define	RQ_NQS	(howmany(RQ_MAX_PRIO + 1, RQ_PPQ)) /* Number of run queues. */
+#define	RQB_BPW	(sizeof(rqb_word_t) * NBBY) /* Bits per runq word. */
+#define	RQB_LEN	(howmany(RQ_NQS, RQB_BPW)) /* Words to cover RQ_NQS queues. */
+#define	RQB_WORD(idx)	((idx) >> RQB_L2BPW)
+#define	RQB_BIT(idx)	(1ul << ((idx) & (RQB_BPW - 1)))
+#define	RQB_FFS(word)	(ffsl((long)(word)) - 1) /* Assumes two-complement. */
 
 /*
  * Head of run queues.
