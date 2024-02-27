@@ -66,6 +66,7 @@
 
 #ifdef _KERNEL
 
+#include <sys/types.h>		/* For bool. */
 #include <sys/proc.h>		/* For inline functions. */
 
 /*
@@ -79,7 +80,7 @@
  */
 int	sched_load(void);
 int	sched_rr_interval(void);
-int	sched_runnable(void);
+bool	sched_runnable(void);
 
 /*
  * Proc related scheduling hooks.

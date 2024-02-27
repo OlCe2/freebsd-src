@@ -683,13 +683,13 @@ schedinit_ap(void)
 	/* Nothing needed. */
 }
 
-int
+bool
 sched_runnable(void)
 {
 #ifdef SMP
-	return runq_check(&runq) + runq_check(&runq_pcpu[PCPU_GET(cpuid)]);
+	return (runq_check(&runq) || runq_check(&runq_pcpu[PCPU_GET(cpuid)]));
 #else
-	return runq_check(&runq);
+	return (runq_check(&runq));
 #endif
 }
 
@@ -1683,7 +1683,7 @@ sched_idletd(void *dummy)
 	for (;;) {
 		mtx_assert(&Giant, MA_NOTOWNED);
 
-		while (sched_runnable() == 0) {
+		while (!sched_runnable()) {
 			cpu_idle(stat->idlecalls + stat->oldidlecalls > 64);
 			stat->idlecalls++;
 		}
