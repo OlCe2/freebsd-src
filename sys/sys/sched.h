@@ -63,6 +63,9 @@
 #define	_SCHED_H_
 
 #ifdef _KERNEL
+
+#include <sys/types.h>		/* For bool. */
+
 /*
  * General scheduling info.
  *
@@ -74,7 +77,7 @@
  */
 int	sched_load(void);
 int	sched_rr_interval(void);
-int	sched_runnable(void);
+bool	sched_runnable(void);
 
 /* 
  * Proc related scheduling hooks.
