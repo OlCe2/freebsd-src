@@ -443,18 +443,15 @@ runq_findq(struct runq *const rq)
 bool
 runq_check(struct runq *rq)
 {
-	struct rqbits *rqb;
-	int i;
+	int idx;
 
-	rqb = &rq->rq_status;
-	for (i = 0; i < RQB_LEN; i++)
-		if (rqb->rqb_bits[i]) {
-			CTR2(KTR_RUNQ, "runq_check: bits=%#x i=%d",
-			    rqb->rqb_bits[i], i);
-			return (true);
-		}
+	idx = runq_findq(rq);
+	if (idx != -1) {
+		CTR1(KTR_RUNQ, "runq_check: idx=%d", idx);
+		return (true);
+	}
+
 	CTR0(KTR_RUNQ, "runq_check: empty");
-
 	return (false);
 }
 
