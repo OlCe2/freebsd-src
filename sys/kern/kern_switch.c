@@ -271,7 +271,7 @@ runq_init(struct runq *rq)
 {
 	int i;
 
-	bzero(rq, sizeof *rq);
+	bzero(rq, sizeof(*rq));
 	for (i = 0; i < RQ_NQS; i++)
 		TAILQ_INIT(&rq->rq_queues[i]);
 }
@@ -389,11 +389,10 @@ runq_add_idx(struct runq *rq, struct thread *td, int idx, int flags)
 	rqh = &rq->rq_queues[idx];
 	CTR4(KTR_RUNQ, "runq_add_idx: td=%p pri=%d idx=%d rqh=%p",
 	    td, td->td_priority.level, idx, rqh);
-	if (flags & SRQ_PREEMPTED) {
+	if (flags & SRQ_PREEMPTED)
 		TAILQ_INSERT_HEAD(rqh, td, td_runq);
-	} else {
+	else
 		TAILQ_INSERT_TAIL(rqh, td, td_runq);
-	}
 }
 /*
  * Return true if there are runnable processes of any priority on the run
@@ -428,7 +427,8 @@ runq_choose_fuzz(struct runq *rq, int fuzz)
 	struct thread *td;
 	int idx;
 
-	while ((idx = runq_findbit(rq)) != -1) {
+	idx = runq_findbit(rq);
+	if (idx != -1) {
 		rqh = &rq->rq_queues[idx];
 		/* fuzz == 1 is normal.. 0 or less are ignored */
 		if (fuzz > 1) {
@@ -470,7 +470,8 @@ runq_choose(struct runq *rq)
 	struct thread *td;
 	int idx;
 
-	while ((idx = runq_findbit(rq)) != -1) {
+	idx = runq_findbit(rq);
+	if (idx != -1) {
 		rqh = &rq->rq_queues[idx];
 		td = TAILQ_FIRST(rqh);
 		KASSERT(td != NULL, ("runq_choose: no thread on busy queue"));
