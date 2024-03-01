@@ -88,10 +88,9 @@ dtrace_vtime_switch_func_t	dtrace_vtime_switch_func;
  * Thread scheduler specific section.  All fields are protected
  * by the thread lock.
  */
-struct td_sched {	
-	struct runq	*ts_runq;	/* Run-queue we're queued on. */
+struct td_sched {
 	short		ts_flags;	/* TSF_* flags. */
-	int		ts_cpu;		/* CPU that we have affinity for. */
+	int		ts_cpu;		/* CPU we are on, or were last on. */
 	int		ts_rltick;	/* Real last tick, for affinity. */
 	int		ts_slice;	/* Ticks of slice remaining. */
 	u_int		ts_slptime;	/* Number of ticks we vol. slept */
@@ -116,39 +115,6 @@ _Static_assert(sizeof(struct thread) + sizeof(struct td_sched) <=
     "increase struct thread0_storage.t0st_sched size");
 
 /*
- * Priority ranges used for interactive and non-interactive timeshare
- * threads.  The timeshare priorities are split up into four ranges.
- * The first range handles interactive threads.  The last three ranges
- * (NHALF, x, and NHALF) handle non-interactive threads with the outer
- * ranges supporting nice values.
- */
-#define	PRI_TIMESHARE_RANGE	(PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE + 1)
-#define	PRI_INTERACT_RANGE	((PRI_TIMESHARE_RANGE - SCHED_PRI_NRESV) / 2)
-#define	PRI_BATCH_RANGE		(PRI_TIMESHARE_RANGE - PRI_INTERACT_RANGE)
-
-#define	PRI_MIN_INTERACT	PRI_MIN_TIMESHARE
-#define	PRI_MAX_INTERACT	(PRI_MIN_TIMESHARE + PRI_INTERACT_RANGE - 1)
-#define	PRI_MIN_BATCH		(PRI_MIN_TIMESHARE + PRI_INTERACT_RANGE)
-#define	PRI_MAX_BATCH		PRI_MAX_TIMESHARE
-
-/*
- * Cpu percentage computation macros and defines.
- *
- * SCHED_TICK_SECS:	Number of seconds to average the cpu usage across.
- * SCHED_TICK_TARG:	Number of hz ticks to average the cpu usage across.
- * SCHED_TICK_MAX:	Maximum number of ticks before scaling back.
- * SCHED_TICK_SHIFT:	Shift factor to avoid rounding away results.
- * SCHED_TICK_HZ:	Compute the number of hz ticks for a given ticks count.
- * SCHED_TICK_TOTAL:	Gives the amount of time we've been recording ticks.
- */
-#define	SCHED_TICK_SECS		10
-#define	SCHED_TICK_TARG		(hz * SCHED_TICK_SECS)
-#define	SCHED_TICK_MAX		(SCHED_TICK_TARG + hz)
-#define	SCHED_TICK_SHIFT	10
-#define	SCHED_TICK_HZ(ts)	((ts)->ts_ticks >> SCHED_TICK_SHIFT)
-#define	SCHED_TICK_TOTAL(ts)	(max((ts)->ts_ltick - (ts)->ts_ftick, hz))
-
-/*
  * These macros determine priorities for non-interactive threads.  They are
  * assigned a priority based on their recent cpu utilization as expressed
  * by the ratio of ticks to the tick total.  NHALF priorities at the start
@@ -169,6 +135,67 @@ _Static_assert(sizeof(struct thread) + sizeof(struct td_sched) <=
     (SCHED_TICK_HZ((ts)) /						\
     (roundup(SCHED_TICK_TOTAL((ts)), SCHED_PRI_RANGE) / SCHED_PRI_RANGE))
 #define	SCHED_PRI_NICE(nice)	(nice)
+
+/*
+ * Priority ranges used for interactive and non-interactive timeshare
+ * threads.  The timeshare priorities are split up into four ranges.
+ * The first range handles interactive threads.  The last three ranges
+ * (NHALF, x, and NHALF) handle non-interactive threads with the outer
+ * ranges supporting nice values.
+ */
+#define	PRI_TIMESHARE_RANGE	(PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE + 1)
+#define	PRI_INTERACT_RANGE	((PRI_TIMESHARE_RANGE - SCHED_PRI_NRESV) / 2)
+#define	PRI_BATCH_RANGE		(PRI_TIMESHARE_RANGE - PRI_INTERACT_RANGE)
+
+#define	PRI_MIN_INTERACT	PRI_MIN_TIMESHARE
+#define	PRI_MAX_INTERACT	(PRI_MIN_TIMESHARE + PRI_INTERACT_RANGE - 1)
+#define	PRI_MIN_BATCH		(PRI_MIN_TIMESHARE + PRI_INTERACT_RANGE)
+#define	PRI_MAX_BATCH		PRI_MAX_TIMESHARE
+
+#define	PRI_MIN_BATCH_RQ_IDX	(RQ_PRI_TO_IDX(PRI_MIN_BATCH))
+#define	PRI_MAX_BATCH_RQ_IDX	(RQ_PRI_TO_IDX(PRI_MAX_BATCH))
+
+/*
+ * Runqueue indices for the implemented scheduling policies' priority bounds.
+ *
+ * In ULE's implementation, realtime policy covers the ITHD, REALTIME and
+ * INTERACT (see above) ranges, timesharing the BATCH range (see above), and
+ * idle policy the IDLE range.
+ *
+ * Priorities from these ranges must not be assigned to the same runqueue's
+ * queue.
+ */
+#define	RQ_REALTIME_MIN		(RQ_PRI_TO_IDX(PRI_MIN_ITHD))
+#define	RQ_REALTIME_MAX		(RQ_PRI_TO_IDX(PRI_MAX_INTERACT))
+#define	RQ_TIMESHARE_MIN	(RQ_PRI_TO_IDX(PRI_MIN_BATCH))
+#define	RQ_TIMESHARE_MAX	(RQ_PRI_TO_IDX(PRI_MAX_BATCH))
+#define	RQ_IDLE_MIN		(RQ_PRI_TO_IDX(PRI_MIN_IDLE))
+#define	RQ_IDLE_MAX		(RQ_PRI_TO_IDX(PRI_MAX_IDLE))
+
+_Static_assert(RQ_REALTIME_MAX != RQ_TIMESHARE_MIN,
+    "ULE's realtime and timeshare policies' ranges overlap");
+_Static_assert(RQ_TIMESHARE_MAX != RQ_IDLE_MIN,
+    "ULE's timeshare and idle policies' ranges overlap");
+
+/* Helper to treat the timeshare range as a circular group of queues. */
+#define RQ_TIMESHARE_MODULO	(RQ_TIMESHARE_MAX - RQ_TIMESHARE_MIN + 1)
+
+/*
+ * Cpu percentage computation macros and defines.
+ *
+ * SCHED_TICK_SECS:	Number of seconds to average the cpu usage across.
+ * SCHED_TICK_TARG:	Number of hz ticks to average the cpu usage across.
+ * SCHED_TICK_MAX:	Maximum number of ticks before scaling back.
+ * SCHED_TICK_SHIFT:	Shift factor to avoid rounding away results.
+ * SCHED_TICK_HZ:	Compute the number of hz ticks for a given ticks count.
+ * SCHED_TICK_TOTAL:	Gives the amount of time we've been recording ticks.
+ */
+#define	SCHED_TICK_SECS		10
+#define	SCHED_TICK_TARG		(hz * SCHED_TICK_SECS)
+#define	SCHED_TICK_MAX		(SCHED_TICK_TARG + hz)
+#define	SCHED_TICK_SHIFT	10
+#define	SCHED_TICK_HZ(ts)	((ts)->ts_ticks >> SCHED_TICK_SHIFT)
+#define	SCHED_TICK_TOTAL(ts)	(max((ts)->ts_ltick - (ts)->ts_ftick, hz))
 
 /*
  * These determine the interactivity of a process.  Interactivity differs from
@@ -255,9 +282,7 @@ struct tdq {
 	u_char		tdq_idx;	/* (t) Current insert index. */
 	u_char		tdq_ridx;	/* (t) Current removal index. */
 	int		tdq_id;		/* (c) cpuid. */
-	struct runq	tdq_realtime;	/* (t) real-time run queue. */
-	struct runq	tdq_timeshare;	/* (t) timeshare run queue. */
-	struct runq	tdq_idle;	/* (t) Queue of IDLE threads. */
+	struct runq	tdq_runq;	/* (t) Run queue. */
 	char		tdq_name[TDQ_NAME_LEN];
 #ifdef KTR
 	char		tdq_loadname[TDQ_LOADNAME_LEN];
@@ -333,8 +358,8 @@ static struct thread *tdq_choose(struct tdq *);
 static void tdq_setup(struct tdq *, int i);
 static void tdq_load_add(struct tdq *, struct thread *);
 static void tdq_load_rem(struct tdq *, struct thread *);
-static __inline void tdq_runq_add(struct tdq *, struct thread *, int);
-static __inline void tdq_runq_rem(struct tdq *, struct thread *);
+static inline void tdq_runq_add(struct tdq *, struct thread *, int);
+static inline void tdq_runq_rem(struct tdq *, struct thread *);
 static inline int sched_shouldpreempt(int, int, int);
 static void tdq_print(int cpu);
 static void runq_print(struct runq *rq);
@@ -344,7 +369,6 @@ static int tdq_move(struct tdq *, struct tdq *);
 static int tdq_idled(struct tdq *);
 static void tdq_notify(struct tdq *, int lowpri);
 static struct thread *tdq_steal(struct tdq *, int);
-static struct thread *runq_steal(struct runq *, int);
 static int sched_pickcpu(struct thread *, int);
 static void sched_balance(void);
 static bool sched_balance_pair(struct tdq *, struct tdq *);
@@ -428,12 +452,8 @@ tdq_print(int cpu)
 	printf("\ttimeshare ridx: %d\n", tdq->tdq_ridx);
 	printf("\tload transferable: %d\n", tdq->tdq_transferable);
 	printf("\tlowest priority:   %d\n", tdq->tdq_lowpri);
-	printf("\trealtime runq:\n");
-	runq_print(&tdq->tdq_realtime);
-	printf("\ttimeshare runq:\n");
-	runq_print(&tdq->tdq_timeshare);
-	printf("\tidle runq:\n");
-	runq_print(&tdq->tdq_idle);
+	printf("\trunq:\n");
+	runq_print(&tdq->tdq_runq);
 }
 
 static inline int
@@ -474,11 +494,11 @@ sched_shouldpreempt(int pri, int cpri, int remote)
  * date with what is actually on the run-queue.  Selects the correct
  * queue position for timeshare threads.
  */
-static __inline void
+static inline void
 tdq_runq_add(struct tdq *tdq, struct thread *td, int flags)
 {
 	struct td_sched *ts;
-	u_char pri;
+	u_char pri, idx;
 
 	TDQ_LOCK_ASSERT(tdq, MA_OWNED);
 	THREAD_LOCK_BLOCKED_ASSERT(td, MA_OWNED);
@@ -490,34 +510,42 @@ tdq_runq_add(struct tdq *tdq, struct thread *td, int flags)
 		tdq->tdq_transferable++;
 		ts->ts_flags |= TSF_XFERABLE;
 	}
-	if (pri < PRI_MIN_BATCH) {
-		ts->ts_runq = &tdq->tdq_realtime;
-	} else if (pri <= PRI_MAX_BATCH) {
-		ts->ts_runq = &tdq->tdq_timeshare;
-		KASSERT(pri <= PRI_MAX_BATCH && pri >= PRI_MIN_BATCH,
-			("Invalid priority %d on timeshare runq", pri));
+	if (PRI_MIN_BATCH <= pri && pri <= PRI_MAX_BATCH) {
 		/*
-		 * This queue contains only priorities between MIN and MAX
-		 * batch.  Use the whole queue to represent these values.
+		 * The queues allocated to the batch range are not used as
+		 * a simple array but as a "circular" one where the insertion
+		 * index is 'tdq_idx'.
 		 */
-		if ((flags & (SRQ_BORROWING|SRQ_PREEMPTED)) == 0) {
-			pri = RQ_NQS * (pri - PRI_MIN_BATCH) / PRI_BATCH_RANGE;
-			pri = (pri + tdq->tdq_idx) % RQ_NQS;
+		if ((flags & (SRQ_BORROWING|SRQ_PREEMPTED)) != 0)
+			/* Current queue from which processes are being run. */
+			idx = tdq->tdq_ridx;
+		else {
+			/*
+			 * Instead of just converting a priority to an index and
+			 * use it directly, the difference of the latter and
+			 * that of the first timeshare queue (RQ_TIMESHARE_MIN)
+			 * has to be added to 'tdq_idx' and possibly wrapped
+			 * around after the last queue of the batch range.  We
+			 * add back RQ_TIMESHARE_MIN only after a possible
+			 * relative index adjustment.
+			 */
+			idx = (tdq->tdq_idx + RQ_PRI_TO_IDX(pri) -
+			    RQ_TIMESHARE_MIN) % RQ_TIMESHARE_MODULO;
 			/*
 			 * This effectively shortens the queue by one so we
 			 * can have a one slot difference between idx and
 			 * ridx while we wait for threads to drain.
 			 */
 			if (tdq->tdq_ridx != tdq->tdq_idx &&
-			    pri == tdq->tdq_ridx)
-				pri = (unsigned char)(pri - 1) % RQ_NQS;
-		} else
-			pri = tdq->tdq_ridx;
-		runq_add_idx(ts->ts_runq, td, pri, flags);
-		return;
+			    idx == tdq->tdq_ridx)
+				idx = (unsigned char)(idx - 1) %
+				    RQ_TIMESHARE_MODULO;
+			/* Back to the absolute index. */
+			idx += RQ_TIMESHARE_MIN;
+		}
+		runq_add_idx(&tdq->tdq_runq, td, idx, flags);
 	} else
-		ts->ts_runq = &tdq->tdq_idle;
-	runq_add(ts->ts_runq, td, flags);
+		runq_add(&tdq->tdq_runq, td, flags);
 }
 
 /*
@@ -525,7 +553,7 @@ tdq_runq_add(struct tdq *tdq, struct thread *td, int flags)
  * is selected to run.  Running threads are not on the queue and the
  * transferable count does not reflect them.
  */
-static __inline void
+static inline void
 tdq_runq_rem(struct tdq *tdq, struct thread *td)
 {
 	struct td_sched *ts;
@@ -534,13 +562,11 @@ tdq_runq_rem(struct tdq *tdq, struct thread *td)
 	ts = td_get_sched(td);
 	TDQ_LOCK_ASSERT(tdq, MA_OWNED);
 	THREAD_LOCK_BLOCKED_ASSERT(td, MA_OWNED);
-	KASSERT(ts->ts_runq != NULL,
-	    ("tdq_runq_remove: thread %p null ts_runq", td));
 	if (ts->ts_flags & TSF_XFERABLE) {
 		tdq->tdq_transferable--;
 		ts->ts_flags &= ~TSF_XFERABLE;
 	}
-	queue_empty = runq_remove(ts->ts_runq, td);
+	queue_empty = runq_remove(&tdq->tdq_runq, td);
 	/*
 	 * If thread has a batch priority and the queue from which it was
 	 * removed is now empty, advance the batch's queue removal index if it
@@ -1196,81 +1222,91 @@ tdq_notify(struct tdq *tdq, int lowpri)
 	ipi_cpu(cpu, IPI_PREEMPT);
 }
 
+struct runq_steal_pred_data {
+	int		cpu;
+	struct thread	*td;
+};
+
+static bool
+runq_steal_pred(struct runq *const rq, const int idx, void* const v)
+{
+	struct runq_steal_pred_data *const data = v;
+	struct thread *td;
+
+	TAILQ_FOREACH(td, &rq->rq_queues[idx], td_runq) {
+		if (THREAD_CAN_MIGRATE(td) && THREAD_CAN_SCHED(td, data->cpu)) {
+			data->td = td;
+			return (true);
+		}
+	}
+
+	return (false);
+}
+
 /*
  * Steals load from a timeshare queue.  Honors the rotating queue head
  * index.
  */
-static struct thread *
-runq_steal_from(struct runq *rq, int cpu, u_char start)
+static inline struct thread *
+runq_steal_timeshare(struct runq *const rq, int cpu, int start_idx)
 {
-	struct rqbits *rqb;
-	struct rqhead *rqh;
-	struct thread *td, *first;
-	int bit;
-	int i;
+	struct runq_steal_pred_data data = {
+		.cpu = cpu,
+		.td = NULL
+	};
+	int idx;
 
-	rqb = &rq->rq_status;
-	bit = start & (RQB_BPW -1);
-	first = NULL;
-again:
-	for (i = RQB_WORD(start); i < RQB_LEN; bit = 0, i++) {
-		if (rqb->rqb_bits[i] == 0)
-			continue;
-		if (bit == 0)
-			bit = RQB_FFS(rqb->rqb_bits[i]);
-		for (; bit < RQB_BPW; bit++) {
-			if ((rqb->rqb_bits[i] & (1ul << bit)) == 0)
-				continue;
-			rqh = &rq->rq_queues[bit + (i << RQB_L2BPW)];
-			TAILQ_FOREACH(td, rqh, td_runq) {
-				if (first) {
-					if (THREAD_CAN_MIGRATE(td) &&
-					    THREAD_CAN_SCHED(td, cpu))
-						return (td);
-				} else
-					first = td;
-			}
-		}
-	}
-	if (start != 0) {
-		start = 0;
-		goto again;
-	}
+	idx = runq_findq_pred(rq, RQ_TIMESHARE_MIN + start_idx,
+	    RQ_TIMESHARE_MAX, &runq_steal_pred, &data);
+	if (idx == -1 && start_idx != 0)
+		idx = runq_findq_pred(rq, RQ_TIMESHARE_MIN,
+		    RQ_TIMESHARE_MIN + start_idx - 1, &runq_steal_pred, &data);
 
-	if (first && THREAD_CAN_MIGRATE(first) &&
-	    THREAD_CAN_SCHED(first, cpu))
-		return (first);
+	if (idx != -1) {
+		MPASS(data.td != NULL);
+		return (data.td);
+	}
 	return (NULL);
 }
 
 /*
- * Steals load from a standard linear queue.
+ * Steals load contained in queues with indices in the specified range.
  */
-static struct thread *
-runq_steal(struct runq *rq, int cpu)
+static inline struct thread *
+runq_steal_range(struct runq *const rq, const int lvl_min, const int lvl_max,
+    int cpu)
 {
-	struct rqhead *rqh;
-	struct rqbits *rqb;
-	struct thread *td;
-	int word;
-	int bit;
+	struct runq_steal_pred_data data = {
+		.cpu = cpu,
+		.td = NULL
+	};
+	int idx;
 
-	rqb = &rq->rq_status;
-	for (word = 0; word < RQB_LEN; word++) {
-		if (rqb->rqb_bits[word] == 0)
-			continue;
-		for (bit = 0; bit < RQB_BPW; bit++) {
-			if ((rqb->rqb_bits[word] & (1ul << bit)) == 0)
-				continue;
-			rqh = &rq->rq_queues[bit + (word << RQB_L2BPW)];
-			TAILQ_FOREACH(td, rqh, td_runq)
-				if (THREAD_CAN_MIGRATE(td) &&
-				    THREAD_CAN_SCHED(td, cpu))
-					return (td);
-		}
+	idx = runq_findq_pred(rq, lvl_min, lvl_max, &runq_steal_pred, &data);
+	if (idx != -1) {
+		MPASS(data.td != NULL);
+		return (data.td);
 	}
 	return (NULL);
 }
+
+/*
+ * Convenience functions to steal from the runtime and idle ranges.
+ */
+static inline struct thread *
+runq_steal_realtime(struct runq *const rq, int cpu)
+{
+
+	return (runq_steal_range(rq, RQ_REALTIME_MIN, RQ_REALTIME_MAX, cpu));
+}
+
+static inline struct thread *
+runq_steal_idle(struct runq *const rq, int cpu)
+{
+
+	return (runq_steal_range(rq, RQ_IDLE_MIN, RQ_IDLE_MAX, cpu));
+}
+
 
 /*
  * Attempt to steal a thread in priority order from a thread queue.
@@ -1281,12 +1317,13 @@ tdq_steal(struct tdq *tdq, int cpu)
 	struct thread *td;
 
 	TDQ_LOCK_ASSERT(tdq, MA_OWNED);
-	if ((td = runq_steal(&tdq->tdq_realtime, cpu)) != NULL)
+	td = runq_steal_realtime(&tdq->tdq_runq, cpu);
+	if (td != NULL)
 		return (td);
-	if ((td = runq_steal_from(&tdq->tdq_timeshare,
-	    cpu, tdq->tdq_ridx)) != NULL)
+	td = runq_steal_timeshare(&tdq->tdq_runq, cpu, tdq->tdq_ridx);
+	if (td != NULL)
 		return (td);
-	return (runq_steal(&tdq->tdq_idle, cpu));
+	return (runq_steal_idle(&tdq->tdq_runq, cpu));
 }
 
 /*
@@ -1468,6 +1505,33 @@ llc:
 }
 #endif
 
+static inline struct thread *
+runq_choose_realtime(struct runq *const rq)
+{
+
+	return (runq_find_thread_range(rq, RQ_REALTIME_MIN, RQ_REALTIME_MAX));
+}
+
+static struct thread *
+runq_choose_timeshare(struct runq *const rq, int start_idx)
+{
+	struct thread *td;
+
+	td = runq_find_thread_range(rq, RQ_TIMESHARE_MIN + start_idx,
+	    RQ_TIMESHARE_MAX);
+	if (td != NULL || start_idx == 0)
+		return (td);
+	return (runq_find_thread_range(rq, RQ_TIMESHARE_MIN,
+	    RQ_TIMESHARE_MIN + start_idx - 1));
+}
+
+static inline struct thread *
+runq_choose_idle(struct runq *const rq)
+{
+
+	return (runq_find_thread_range(rq, RQ_IDLE_MIN, RQ_IDLE_MAX));
+}
+
 /*
  * Pick the highest priority task we have and return it.
  */
@@ -1477,17 +1541,17 @@ tdq_choose(struct tdq *tdq)
 	struct thread *td;
 
 	TDQ_LOCK_ASSERT(tdq, MA_OWNED);
-	td = runq_choose(&tdq->tdq_realtime);
+	td = runq_choose_realtime(&tdq->tdq_runq);
 	if (td != NULL)
 		return (td);
-	td = runq_choose_from(&tdq->tdq_timeshare, tdq->tdq_ridx);
+	td = runq_choose_timeshare(&tdq->tdq_runq, tdq->tdq_ridx);
 	if (td != NULL) {
 		KASSERT(td->td_priority.level >= PRI_MIN_BATCH,
 		    ("tdq_choose: Invalid priority on timeshare queue %d",
 		    td->td_priority.level));
 		return (td);
 	}
-	td = runq_choose(&tdq->tdq_idle);
+	td = runq_choose_idle(&tdq->tdq_runq);
 	if (td != NULL) {
 		KASSERT(td->td_priority.level >= PRI_MIN_IDLE,
 		    ("tdq_choose: Invalid priority on idle queue %d",
@@ -1507,9 +1571,7 @@ tdq_setup(struct tdq *tdq, int id)
 
 	if (bootverbose)
 		printf("ULE: setup cpu %d\n", id);
-	runq_init(&tdq->tdq_realtime);
-	runq_init(&tdq->tdq_timeshare);
-	runq_init(&tdq->tdq_idle);
+	runq_init(&tdq->tdq_runq);
 	tdq->tdq_id = id;
 	snprintf(tdq->tdq_name, sizeof(tdq->tdq_name),
 	    "sched lock %d", (int)TDQ_ID(tdq));
@@ -2621,8 +2683,9 @@ sched_clock(struct thread *td, int cnt)
 	 * threads get a chance to run.
 	 */
 	if (tdq->tdq_idx == tdq->tdq_ridx) {
-		tdq->tdq_idx = (tdq->tdq_idx + 1) % RQ_NQS;
-		if (TAILQ_EMPTY(&tdq->tdq_timeshare.rq_queues[tdq->tdq_ridx]))
+		tdq->tdq_idx = (tdq->tdq_idx + 1) % RQ_TIMESHARE_MODULO;
+		if (TAILQ_EMPTY(&tdq->tdq_runq.rq_queues[RQ_TIMESHARE_MIN +
+		    tdq->tdq_ridx]))
 			tdq->tdq_ridx = tdq->tdq_idx;
 	}
 	ts = td_get_sched(td);

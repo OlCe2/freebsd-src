@@ -66,6 +66,7 @@ typedef	unsigned long	rqb_word_t;	/* runq's status words type. */
 #define	RQB_WORD(idx)	((idx) >> RQB_L2BPW)
 #define	RQB_BIT(idx)	(1ul << ((idx) & (RQB_BPW - 1)))
 #define	RQB_FFS(word)	(ffsl((long)(word)) - 1) /* Assumes two-complement. */
+#define	RQB_TO_IDX(word_idx, bit_idx)	(((word_idx) << RQB_L2BPW) + (bit_idx))
 
 
 #ifdef _KERNEL
@@ -101,9 +102,14 @@ void	runq_add_idx(struct runq *, struct thread *, int _idx, int _flags);
 bool	runq_remove(struct runq *, struct thread *);
 
 bool	runq_check(struct runq *);
-struct thread	*runq_choose(struct runq *);
-struct thread	*runq_choose_fuzz(struct runq *, int _fuzz);
-struct thread	*runq_choose_from(struct runq *, int _idx);
+typedef bool runq_pred_t(struct runq *, int _idx, void *_data);
+int	runq_findq_pred(struct runq *const rq, const int lvl_min,
+	    const int lvl_max, runq_pred_t *const pred,
+	    void *const pred_data);
+struct thread *runq_find_thread_range(struct runq *const rq,
+    const int lvl_min, const int lvl_max);
+struct thread *runq_choose(struct runq *);
+struct thread *runq_choose_fuzz(struct runq *, int _fuzz);
 #endif /* _KERNEL */
 
 #endif
