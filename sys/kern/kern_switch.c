@@ -283,15 +283,16 @@ runq_init(struct runq *rq)
 static __inline void
 runq_setbit(struct runq *rq, int idx)
 {
-	struct rqbits *rqb;
+	struct rqbits *const rqb = &rq->rq_status;
+	const int word_idx = RQB_WORD(idx);
+	const rqb_word_t word_bit = RQB_BIT(idx);
+	rqb_word_t v;
 
 	CHECK_IDX(idx);
-	rqb = &rq->rq_status;
-	CTR4(KTR_RUNQ, "runq_setbit: bits=%#x %#x bit=%#x word=%d",
-	    rqb->rqb_bits[RQB_WORD(idx)],
-	    rqb->rqb_bits[RQB_WORD(idx)] | RQB_BIT(idx),
-	    RQB_BIT(idx), RQB_WORD(idx));
-	rqb->rqb_bits[RQB_WORD(idx)] |= RQB_BIT(idx);
+	v = rqb->rqb_bits[word_idx];
+	CTR4(KTR_RUNQ, "runq_setbit: idx=%d word_idx=%d bits=%#x->%#x",
+	    idx, word_idx, v, v | word_bit);
+	rqb->rqb_bits[word_idx] = v | word_bit;
 }
 
 /*
@@ -330,15 +331,16 @@ runq_add_idx(struct runq *rq, struct thread *td, int idx, int flags)
 static __inline void
 runq_clrbit(struct runq *rq, int idx)
 {
-	struct rqbits *rqb;
+	struct rqbits *const rqb = &rq->rq_status;
+	const int word_idx = RQB_WORD(idx);
+	const rqb_word_t word_bit = RQB_BIT(idx);
+	rqb_word_t v;
 
 	CHECK_IDX(idx);
-	rqb = &rq->rq_status;
-	CTR4(KTR_RUNQ, "runq_clrbit: bits=%#x %#x bit=%#x word=%d",
-	    rqb->rqb_bits[RQB_WORD(idx)],
-	    rqb->rqb_bits[RQB_WORD(idx)] & ~RQB_BIT(idx),
-	    RQB_BIT(idx), RQB_WORD(idx));
-	rqb->rqb_bits[RQB_WORD(idx)] &= ~RQB_BIT(idx);
+	v = rqb->rqb_bits[word_idx];
+	CTR4(KTR_RUNQ, "runq_clrbit: idx=%d word_idx=%d bits=%#x->%#x",
+	    idx, word_idx, v, v & ~word_bit);
+	rqb->rqb_bits[word_idx] = v & ~word_bit;
 }
 
 /*
