@@ -52,7 +52,6 @@
 #include <sys/_mutex.h>
 #include <sys/osd.h>
 #include <sys/priority.h>
-#include <sys/runq.h>
 #include <sys/resource.h>
 #include <sys/sigio.h>
 #include <sys/signal.h>
