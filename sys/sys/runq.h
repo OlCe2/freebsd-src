@@ -29,8 +29,6 @@
 #ifndef	_RUNQ_H_
 #define	_RUNQ_H_
 
-struct thread;
-
 /*
  * Run queue parameters.
  */
@@ -59,6 +57,10 @@ typedef	unsigned long	rqb_word_t;	/* runq's status words type. */
 #define	RQB_WORD(idx)	((idx) / RQB_BPW)
 #define	RQB_BIT(idx)	(1ul << ((idx) % RQB_BPW))
 #define	RQB_FFS(word)	(ffsl((long)(word)) - 1) /* Assumes two-complement. */
+
+
+#ifdef _KERNEL
+struct thread;
 
 /*
  * Head of run queues.
@@ -91,5 +93,6 @@ struct	thread *runq_choose_fuzz(struct runq *, int);
 void	runq_init(struct runq *);
 void	runq_remove(struct runq *, struct thread *);
 void	runq_remove_idx(struct runq *, struct thread *, u_char *);
+#endif /* _KERNEL */
 
 #endif
