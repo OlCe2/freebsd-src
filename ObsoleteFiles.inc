@@ -51,6 +51,9 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20240504: Remove remnants of portsnap(8)
+OLD_DIRS+=var/db/portsnap
+
 # 20240422: remove improperly installed libcxxrt.so.1
 MOVED_LIBS+=usr/lib/libcxxrt.so.1
 
