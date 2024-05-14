@@ -34,7 +34,7 @@
  */
 
 #define	RQ_MAX_PRIO	(255)	/* Maximum priority (minimum is 0). */
-#define	RQ_PPQ		(4)	/* Priorities per queue. */
+#define	RQ_PPQ		(1)	/* Priorities per queue. */
 
 /*
  * Convenience macros from <sys/param.h>.
