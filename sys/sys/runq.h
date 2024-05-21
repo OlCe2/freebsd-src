@@ -29,6 +29,14 @@
 #ifndef	_RUNQ_H_
 #define	_RUNQ_H_
 
+#ifndef _KERNEL
+#error "no user-serviceable parts inside"
+#endif
+
+#include <sys/types.h>		/* For bool. */
+
+struct thread;
+
 /*
  * Run queue parameters.
  */
@@ -70,11 +78,6 @@ typedef unsigned long	rqsw_t;		/* runq's status words type. */
 #define	RQSW_FIRST_QUEUE_IDX(word_idx, word)				\
 	RQSW_TO_QUEUE_IDX(word_idx, RQSW_BSF(word))
 
-
-#ifdef _KERNEL
-#include <sys/types.h>		/* For bool. */
-
-struct thread;
 
 /*
  * The queue for a given index as a list of threads.
@@ -118,6 +121,5 @@ struct thread	*runq_first_thread_range(struct runq *const rq,
 bool		 runq_not_empty(struct runq *);
 struct thread	*runq_choose(struct runq *);
 struct thread	*runq_choose_fuzz(struct runq *, int _fuzz);
-#endif /* _KERNEL */
 
 #endif
