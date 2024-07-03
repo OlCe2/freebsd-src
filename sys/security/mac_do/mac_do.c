@@ -58,8 +58,6 @@ struct rules {
 	TAILQ_HEAD(rulehead, rule) head;
 };
 
-static struct rules rules0;
-
 static void
 toast_rules(struct rulehead *head)
 {
@@ -188,19 +186,20 @@ out:
 static struct rules *
 find_rules(struct prison *const pr, struct prison **const aprp)
 {
-	struct prison *cpr;
+	struct prison *cpr, *ppr;
 	struct rules *rules;
 
-	for (cpr = pr;; cpr = cpr->pr_parent) {
+	cpr = pr;
+	for (;;) {
 		prison_lock(cpr);
-		if (cpr == &prison0) {
-			rules = &rules0;
-			break;
-		}
 		rules = osd_jail_get(cpr, mac_do_osd_jail_slot);
 		if (rules != NULL)
 			break;
 		prison_unlock(cpr);
+
+		ppr = cpr->pr_parent;
+		MPASS(ppr != NULL);
+		cpr = ppr;
 	}
 	*aprp = cpr;
 
@@ -218,11 +217,6 @@ ensure_rules(struct prison *const pr)
 {
 	struct rules *rules, *new_rules;
 	void **rsv;
-
-	if (pr == &prison0) {
-		prison_lock(pr);
-		return (&rules0);
-	}
 
 	/* Optimistically try to avoid memory allocations. */
 restart:
@@ -352,7 +346,6 @@ static void
 destroy(struct mac_policy_conf *mpc)
 {
 	osd_jail_deregister(mac_do_osd_jail_slot);
-	toast_rules(&rules0.head);
 }
 
 static int
@@ -466,7 +459,8 @@ init(struct mac_policy_conf *mpc)
 	struct prison *pr;
 
 	mac_do_osd_jail_slot = osd_jail_register(dealloc_osd, osd_methods);
-	TAILQ_INIT(&rules0.head);
+	(void)ensure_rules(&prison0);
+	prison_unlock(&prison0);
 	sx_slock(&allprison_lock);
 	TAILQ_FOREACH(pr, &allprison, pr_list) {
 		(void)ensure_rules(pr);
