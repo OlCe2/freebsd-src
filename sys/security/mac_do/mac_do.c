@@ -425,19 +425,6 @@ mac_do_prison_create(void *obj, void *data __unused)
 }
 
 static int
-mac_do_prison_remove(void *obj, void *data __unused)
-{
-	struct prison *pr = obj;
-	struct rules *r;
-
-	prison_lock(pr);
-	r = osd_jail_get(pr, mac_do_osd_jail_slot);
-	prison_unlock(pr);
-	toast_rules(&r->head);
-	return (0);
-}
-
-static int
 mac_do_prison_check(void *obj, void *data)
 {
 	struct vfsoptlist *opts = data;
@@ -465,19 +452,26 @@ mac_do_prison_check(void *obj, void *data)
 	return (error);
 }
 
+/*
+ * OSD jail methods.
+ *
+ * There is no PR_METHOD_REMOVE, as OSD storage is destroyed by the common jail
+ * code (see prison_cleanup()), which triggers a run of our dealloc_osd()
+ * destructor.
+ */
+static const osd_method_t osd_methods[PR_MAXMETHOD] = {
+	[PR_METHOD_CREATE] = mac_do_prison_create,
+	[PR_METHOD_GET] = mac_do_prison_get,
+	[PR_METHOD_SET] = mac_do_prison_set,
+	[PR_METHOD_CHECK] = mac_do_prison_check,
+};
+
 static void
 init(struct mac_policy_conf *mpc)
 {
-	static osd_method_t methods[PR_MAXMETHOD] = {
-		[PR_METHOD_CREATE] = mac_do_prison_create,
-		[PR_METHOD_GET] = mac_do_prison_get,
-		[PR_METHOD_SET] = mac_do_prison_set,
-		[PR_METHOD_CHECK] = mac_do_prison_check,
-		[PR_METHOD_REMOVE] = mac_do_prison_remove,
-	};
 	struct prison *pr;
 
-	mac_do_osd_jail_slot = osd_jail_register(dealloc_osd, methods);
+	mac_do_osd_jail_slot = osd_jail_register(dealloc_osd, osd_methods);
 	TAILQ_INIT(&rules0.head);
 	sx_slock(&allprison_lock);
 	TAILQ_FOREACH(pr, &allprison, pr_list) {
