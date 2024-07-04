@@ -1061,6 +1061,21 @@ kldload_param(const char *name)
 		if (kl < 0 && errno == ENOENT &&
 		    strncmp(modname, "no", 2) == 0)
 			kl = kldload(modname + 2);
+	} else if (strncmp(name, "mac.", 4) == 0) {
+		const size_t len = strlen(name);
+		/* Going to copy 'name' to replace the '.' by '_'. */
+		char *const modname = malloc(len + 1);
+
+		if (modname == NULL) {
+			errno = ENOMEM;
+			return (-1);
+		}
+
+		/* These are safe to use here. */
+		strcpy(modname, "mac_");
+		strcat(modname, name + 4);
+		kl = kldload(modname);
+		free(modname);
 	} else {
 		errno = ENOENT;
 		return (-1);
