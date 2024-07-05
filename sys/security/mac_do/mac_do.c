@@ -127,23 +127,69 @@ parse_id_type(const char *const string, int *const type)
 }
 
 static int
-parse_rule_element(char *element, struct rule **rule)
+parse_rule_clause_to(char *to, struct rule *const template,
+    struct rulehead *const head)
 {
-	const char *from_type, *from_id, *to;
-	char *p;
-	struct rule *new;
+	char *to_type, *to_id, *p;
 	int error;
 
-	new = malloc(sizeof(*new), M_DO, M_ZERO|M_WAITOK);
-
-	from_type = strsep(&element, "=");
-	if (from_type == NULL)
+	to_type = strsep(&to, "=");
+	if (to_type == NULL)
 		goto einval;
-
-	error = parse_id_type(from_type, &new->from_type);
+	error = parse_id_type(to_type, &template->to_type);
 	if (error != 0)
 		goto einval;
-	switch (new->from_type) {
+
+	to_id = strsep(&to, "");
+	switch (template->to_type) {
+	case RULE_UID:
+	case RULE_GID:
+		if (to_id == NULL || *to_id == '\0')
+			goto einval;
+		template->to_id = strtonni(to_id, &p, 10);
+		if (*p != '\0' || template->to_id < 0)
+			goto einval;
+		break;
+	case RULE_ANY:
+		/* No ID allowed. */
+		if (to_id != NULL)
+			goto einval;
+		break;
+	default:
+		__assert_unreachable();
+	}
+
+	{
+		/* Freed when the 'struct rulehead' container is freed. */
+		struct rule *const new = malloc(sizeof(*new), M_DO, M_WAITOK);
+
+		*new = *template;
+		TAILQ_INSERT_TAIL(head, new, r_entries);
+	}
+	return (0);
+
+einval:
+	return (EINVAL);
+}
+
+/*
+ * See comments for parse_rule() below.
+ */
+static int
+parse_rule_clause(char *clause, struct rule *template,
+    struct rulehead *const head)
+{
+	const char *from_type, *from_id;
+	char *to_list, *p;
+	int error;
+
+	from_type = strsep(&clause, "=");
+	if (from_type == NULL)
+		goto einval;
+	error = parse_id_type(from_type, &template->from_type);
+	if (error != 0)
+		goto einval;
+	switch (template->from_type) {
 	case RULE_UID:
 	case RULE_GID:
 		break;
@@ -151,35 +197,28 @@ parse_rule_element(char *element, struct rule **rule)
 		goto einval;
 	}
 
-	from_id = strsep(&element, ":");
+	from_id = strsep(&clause, ":");
 	if (from_id == NULL || *from_id == '\0')
 		goto einval;
 
-	new->from_id = strtonni(from_id, &p, 10);
-	if (*p != '\0' || new->from_id < 0)
+	template->from_id = strtonni(from_id, &p, 10);
+	if (*p != '\0' || template->from_id < 0)
 		goto einval;
 
-	if (*p != '\0')
+	/* Now parse the "to" list. */
+	to_list = strsep(&clause, ",");
+	if (to_list == NULL)
 		goto einval;
-
-	to = element;
-	if (to == NULL || *to == '\0')
-		goto einval;
-
-	if (strcmp(to, "any") == 0 || strcmp(to, "*") == 0)
-		new->to_type = RULE_ANY;
-	else {
-		new->to_type = RULE_UID;
-		new->to_id = strtonni(to, &p, 10);
-		if (*p != '\0' || new->to_id < 0)
+	do {
+		error = parse_rule_clause_to(to_list, template, head);
+		if (error != 0)
 			goto einval;
-	}
 
-	*rule = new;
+		to_list = strsep(&clause, ",");
+	} while (to_list != NULL);
+
 	return (0);
 einval:
-	free(new, M_DO);
-	*rule = NULL;
 	return (EINVAL);
 }
 
@@ -190,22 +229,29 @@ einval:
  * with structures representing the rules.  On error, 'head' is left empty and
  * the returned value is non-zero.  If 'string' has length greater or equal to
  * MAC_RULE_STRING_LEN, ENAMETOOLONG is returned.  If it is not in the expected
- * format (comma-separated list of clauses of the form "<type>=<val>:<target>",
- * where <type> is "uid" or "gid", <val> an UID or GID (depending on <type>) and
- * <target> is "*", "any" or some UID), EINVAL is returned.
+ * format, EINVAL is returned.
+ *
+ * Expected format: A semi-colon-separated list of clauses of the form
+ * "<type>=<val>:<target>", where <type> is "uid" or "gid", <val> an UID or GID
+ * (depending on <type>) and <target> is "*", "any" or a comma-separated list of
+ * '<type>=<val>' specifications.  In addition, empty clauses are allowed (and
+ * do nothing).
+ *
+ * Examples:
+ * - "uid=1001:uid=1010,gid=1010;uid=1002:any"
+ * - "gid=1010:gid=1011,gid=1012,gid=1013"
  */
 static int
 parse_rules(const char *const string, struct rulehead *const head)
 {
 	const size_t len = strlen(string);
-	char *copy;
-	char *p;
-	char *element;
-	struct rule *new;
+	char *copy, *p, *clause;
+	struct rule template;
 	int error = 0;
 
 	QMD_TAILQ_CHECK_TAIL(head, r_entries);
 	MPASS(TAILQ_EMPTY(head));
+	bzero(&template, sizeof(template));
 
 	if (len >= MAC_RULE_STRING_LEN)
 		return (ENAMETOOLONG);
@@ -215,15 +261,14 @@ parse_rules(const char *const string, struct rulehead *const head)
 	MPASS(copy[len] == '\0'); /* Catch some races. */
 
 	p = copy;
-	while ((element = strsep(&p, ",")) != NULL) {
-		if (element[0] == '\0')
+	while ((clause = strsep(&p, ";")) != NULL) {
+		if (clause[0] == '\0')
 			continue;
-		error = parse_rule_element(element, &new);
+		error = parse_rule_clause(clause, &template, head);
 		if (error != 0) {
 			toast_rules(head);
 			goto out;
 		}
-		TAILQ_INSERT_TAIL(head, new, r_entries);
 	}
 out:
 	free(copy, M_DO);
