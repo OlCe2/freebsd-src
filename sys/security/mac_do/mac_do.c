@@ -8,6 +8,7 @@
 #include <sys/malloc.h>
 #include <sys/jail.h>
 #include <sys/kernel.h>
+#include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/module.h>
 #include <sys/mount.h>
@@ -73,6 +74,24 @@ toast_rules(struct rulehead *head)
 	TAILQ_INIT(head);
 }
 
+/*
+ * String to non-negative int.
+ *
+ * Returns minus an error (EINVAL or EOVERFLOW) in case of failure.
+ */
+static int
+strtonni(const char *const restrict s, char **const restrict endptr, int base)
+{
+	const long l = strtol(s, endptr, base);
+
+	if (l < 0)
+		return (-EINVAL);
+	else if (l == LONG_MAX || l > INT_MAX)
+		return (-EOVERFLOW);
+
+	return ((int)l);
+}
+
 static int
 parse_rule_element(char *element, struct rule **rule)
 {
@@ -97,7 +116,10 @@ parse_rule_element(char *element, struct rule **rule)
 	if (from_id == NULL || *from_id == '\0')
 		goto einval;
 
-	new->from_id = strtol(from_id, &p, 10);
+	new->from_id = strtonni(from_id, &p, 10);
+	if (*p != '\0' || new->from_id < 0)
+		goto einval;
+
 	if (*p != '\0')
 		goto einval;
 
@@ -109,8 +131,8 @@ parse_rule_element(char *element, struct rule **rule)
 		new->to_type = RULE_ANY;
 	else {
 		new->to_type = RULE_UID;
-		new->to_id = strtol(to, &p, 10);
-		if (*p != '\0')
+		new->to_id = strtonni(to, &p, 10);
+		if (*p != '\0' || new->to_id < 0)
 			goto einval;
 	}
 
