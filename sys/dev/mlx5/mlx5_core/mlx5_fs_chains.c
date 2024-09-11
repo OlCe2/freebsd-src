@@ -48,16 +48,16 @@ struct fs_chain {
 	struct mlx5_modify_hdr *miss_modify_hdr;
 };
 
-struct prio_key {
+struct fs_chains_prio_key {
 	u32 chain;
 	u32 prio;
 	u32 level;
 };
 
-struct prio {
+struct fs_chains_prio {
 	struct list_head list;
 
-	struct prio_key key;
+	struct fs_chains_prio_key key;
 	uint32_t xa_idx;
 
 	int ref;
@@ -78,9 +78,9 @@ static const struct rhashtable_params chain_params = {
 };
 
 static const struct rhashtable_params prio_params = {
-	.head_offset = offsetof(struct prio, node),
-	.key_offset = offsetof(struct prio, key),
-	.key_len = sizeof_field(struct prio, key),
+	.head_offset = offsetof(struct fs_chains_prio, node),
+	.key_offset = offsetof(struct fs_chains_prio, key),
+	.key_len = sizeof_field(struct fs_chains_prio, key),
 	.automatic_shrinking = true,
 };
 */
@@ -283,12 +283,12 @@ mlx5_chains_add_miss_rule(struct fs_chain *chain,
 }
 
 static int
-mlx5_chains_update_prio_prevs(struct prio *prio,
+mlx5_chains_update_prio_prevs(struct fs_chains_prio *prio,
 			      struct mlx5_flow_table *next_ft)
 {
 	struct mlx5_flow_handle *miss_rules[FDB_TC_LEVELS_PER_PRIO + 1] = {};
 	struct fs_chain *chain = prio->chain;
-	struct prio *pos;
+	struct fs_chains_prio *pos;
 	int n = 0, err;
 
 	if (prio->key.level)
@@ -347,7 +347,7 @@ mlx5_chains_put_chain(struct fs_chain *chain)
 		mlx5_chains_destroy_chain(chain);
 }
 
-static struct prio *
+static struct fs_chains_prio *
 mlx5_chains_create_prio(struct mlx5_fs_chains *chains,
 			u32 chain, u32 prio, u32 level)
 {
@@ -358,7 +358,7 @@ mlx5_chains_create_prio(struct mlx5_fs_chains *chains,
 	struct mlx5_flow_table *ft;
 	struct fs_chain *chain_s;
 	struct list_head *pos;
-	struct prio *prio_s;
+	struct fs_chains_prio *prio_s;
 	u32 *flow_group_in;
 	int err;
 
@@ -389,7 +389,7 @@ mlx5_chains_create_prio(struct mlx5_fs_chains *chains,
 		  chains_default_ft(chains) :
 		  chains_end_ft(chains);
 	list_for_each(pos, &chain_s->prios_list) {
-		struct prio *p = list_entry(pos, struct prio, list);
+		struct fs_chains_prio *p = list_entry(pos, struct fs_chains_prio, list);
 
 		/* exit on first pos that is larger */
 		if (prio < p->key.prio || (prio == p->key.prio &&
@@ -466,7 +466,7 @@ err_alloc:
 
 static void
 mlx5_chains_destroy_prio(struct mlx5_fs_chains *chains,
-			 struct prio *prio)
+			 struct fs_chains_prio *prio)
 {
 	struct fs_chain *chain = prio->chain;
 
@@ -487,7 +487,7 @@ mlx5_chains_get_table(struct mlx5_fs_chains *chains, u32 chain, u32 prio,
 		      u32 level)
 {
 	struct mlx5_flow_table *prev_fts;
-	struct prio *prio_s;
+	struct fs_chains_prio *prio_s;
 	unsigned long idx;
 	int l = 0;
 
@@ -539,7 +539,7 @@ void
 mlx5_chains_put_table(struct mlx5_fs_chains *chains, u32 chain, u32 prio,
 		      u32 level)
 {
-	struct prio *prio_s;
+	struct fs_chains_prio *prio_s;
 	unsigned long idx;
 
 	mutex_lock(&chains_lock(chains));
