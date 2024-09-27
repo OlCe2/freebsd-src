@@ -2309,10 +2309,8 @@ static void
 fddrop(struct filedesc *fdp)
 {
 
-	if (refcount_load(&fdp->fd_holdcnt) > 1) {
-		if (refcount_release(&fdp->fd_holdcnt) == 0)
-			return;
-	}
+	if (!refcount_release(&fdp->fd_holdcnt))
+		return;
 
 	FILEDESC_LOCK_DESTROY(fdp);
 	uma_zfree(filedesc0_zone, fdp);
