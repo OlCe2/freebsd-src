@@ -1928,39 +1928,43 @@ vm_phys_early_add_seg(vm_paddr_t start, vm_paddr_t end)
 vm_paddr_t
 vm_phys_early_alloc(int domain, size_t alloc_size)
 {
-#ifdef NUMA
-	int mem_index;
-#endif
 	int i, biggestone;
-	vm_paddr_t pa, mem_start, mem_end, size, biggestsize, align;
+	vm_paddr_t pa, mem_start, mem_end, size, biggestsize, align_off;
 
 	KASSERT(domain == -1 || (domain >= 0 && domain < vm_ndomains),
 	    ("%s: invalid domain index %d", __func__, domain));
+	MPASS(alloc_size != 0);
 
-	/*
-	 * Search the mem_affinity array for the biggest address
-	 * range in the desired domain.  This is used to constrain
-	 * the phys_avail selection below.
-	 */
-	biggestsize = 0;
+	/* Physical segment constraint for the phys_avail[] selection below. */
 	mem_start = 0;
 	mem_end = -1;
 #ifdef NUMA
-	mem_index = 0;
+	/*
+	 * Constrain the phys_avail[] selection with the biggest segment in the
+	 * desired domain.  We proceed with this search even if 'domain' is -1,
+	 * as allocating from the biggest chunk generally reduces the risk of
+	 * depletion of any domain.
+	 */
 	if (mem_affinity != NULL) {
+		biggestsize = 0;
+		biggestone = -1;
 		for (i = 0;; i++) {
 			size = mem_affinity[i].end - mem_affinity[i].start;
 			if (size == 0)
+				/* End of mem_affinity[]. */
 				break;
 			if (domain != -1 && mem_affinity[i].domain != domain)
 				continue;
 			if (size > biggestsize) {
-				mem_index = i;
+				biggestone = i;
 				biggestsize = size;
 			}
 		}
-		mem_start = mem_affinity[mem_index].start;
-		mem_end = mem_affinity[mem_index].end;
+		if (biggestone == -1)
+			panic("%s: No mem affinity range for domain %d",
+			    __func__, domain);
+		mem_start = mem_affinity[biggestone].start;
+		mem_end = mem_affinity[biggestone].end;
 	}
 #endif
 
@@ -1969,11 +1973,14 @@ vm_phys_early_alloc(int domain, size_t alloc_size)
 	 * numa domain.
 	 */
 	biggestsize = 0;
-	biggestone = 0;
+	biggestone = -1;
 	for (i = 0; phys_avail[i + 1] != 0; i += 2) {
-		/* skip regions that are out of range */
-		if (phys_avail[i+1] - alloc_size < mem_start ||
-		    phys_avail[i+1] > mem_end)
+		/*
+		 * Skip regions that are out of range.  phys_avail[] segments
+		 * cannot span the bounds of each physical segments of
+		 * mem_affinity[] (thanks to vm_phys_early_startup()).
+		 */
+		if (phys_avail[i] >= mem_end || phys_avail[i + 1] <= mem_start)
 			continue;
 		size = vm_phys_avail_size(i);
 		if (size > biggestsize) {
@@ -1981,6 +1988,15 @@ vm_phys_early_alloc(int domain, size_t alloc_size)
 			biggestsize = size;
 		}
 	}
+	if (biggestone == -1)
+		panic("%s: No physical range for domain %d", __func__, domain);
+
+	/*
+	 * Because phys_avail[] bounds have been aligned to PAGE_SIZE,
+	 * at this point we know there is at least one page available.
+	 */
+	MPASS(biggestsize >= PAGE_SIZE);
+
 	alloc_size = round_page(alloc_size);
 
 	/*
@@ -1996,14 +2012,22 @@ vm_phys_early_alloc(int domain, size_t alloc_size)
 	/*
 	 * Naturally align large allocations.
 	 */
-	align = phys_avail[biggestone + 1] & (alloc_size - 1);
-	if (alloc_size + align > biggestsize)
-		panic("cannot find a large enough size\n");
-	if (align != 0 &&
-	    vm_phys_avail_split(phys_avail[biggestone + 1] - align,
-	    biggestone) != 0)
-		/* Wasting memory. */
-		phys_avail[biggestone + 1] -= align;
+	align_off = phys_avail[biggestone + 1] & (alloc_size - 1);
+	if (alloc_size + align_off > biggestsize)
+		panic("%s: No large enough chunk: alloc_size = %zu, "
+		    "align_off = %ju, biggestsize = %ju, biggestone = %d "
+		    "(%jx to %jx)", __func__, alloc_size, (uintmax_t)align_off,
+		    (uintmax_t)biggestsize, biggestone, phys_avail[biggestone],
+		    phys_avail[biggestone + 1]);
+	if (align_off != 0 &&
+	    vm_phys_avail_split(phys_avail[biggestone + 1] - align_off,
+	    biggestone) != 0) {
+		/* No more physical segments available.  Wasting memory. */
+		phys_avail[biggestone + 1] -= align_off;
+		if (bootverbose)
+			printf("%s: Wasting %ju bytes for alignment.\n",
+			    __func__, (uintmax_t)align_off);
+	}
 
 	phys_avail[biggestone + 1] -= alloc_size;
 	vm_phys_avail_check(biggestone);
