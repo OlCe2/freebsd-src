@@ -3442,7 +3442,7 @@ moea64_page_array_startup(long pages)
 	/* Short-circuit single-domain systems. */
 	if (vm_ndomains == 1) {
 		size = round_page(pages * sizeof(struct vm_page));
-		pa = vm_phys_early_alloc(0, size);
+		pa = vm_phys_early_alloc(size, 0);
 		vm_page_base = moea64_map(&vm_page_base,
 		    pa, pa + size, VM_PROT_READ | VM_PROT_WRITE);
 		vm_page_array_size = pages;
@@ -3484,7 +3484,7 @@ moea64_page_array_startup(long pages)
 		size = round_page(size * sizeof(struct vm_page));
 		needed = size;
 		size = roundup2(size, moea64_large_page_size);
-		pa = vm_phys_early_alloc(i, size);
+		pa = vm_phys_early_alloc(size, i);
 		vm_page_array_size += size / sizeof(struct vm_page);
 		moea64_map_range(va, pa, size >> PAGE_SHIFT);
 		/* Scoot up domain 0, to reduce the domain page overlap. */

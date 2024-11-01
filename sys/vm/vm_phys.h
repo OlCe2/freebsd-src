@@ -81,7 +81,7 @@ void vm_phys_register_domains(int ndomains, struct mem_affinity *affinity,
 bool vm_phys_unfree_page(vm_paddr_t pa);
 int vm_phys_mem_affinity(int f, int t);
 void vm_phys_early_add_seg(vm_paddr_t start, vm_paddr_t end);
-vm_paddr_t vm_phys_early_alloc(int domain, size_t alloc_size);
+vm_paddr_t vm_phys_early_alloc(size_t alloc_size, int domain);
 void vm_phys_early_startup(void);
 int vm_phys_avail_largest(void);
 vm_paddr_t vm_phys_avail_size(int i);

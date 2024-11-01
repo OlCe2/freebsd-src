@@ -1926,7 +1926,7 @@ vm_phys_early_add_seg(vm_paddr_t start, vm_paddr_t end)
  * allocator is bootstrapped.
  */
 vm_paddr_t
-vm_phys_early_alloc(int domain, size_t alloc_size)
+vm_phys_early_alloc(size_t alloc_size, int domain)
 {
 	int i, biggestone;
 	vm_paddr_t pa, mem_start, mem_end, size, biggestsize, align_off;

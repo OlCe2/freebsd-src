@@ -6438,7 +6438,7 @@ mmu_radix_page_array_startup(long pages)
 	start = VM_MIN_KERNEL_ADDRESS;
 	end = start + pages * sizeof(struct vm_page);
 
-	pa = vm_phys_early_alloc(-1, end - start);
+	pa = vm_phys_early_alloc(end - start, -1);
 
 	start = mmu_radix_map(&start, pa, end - start, VM_MEMATTR_DEFAULT);
 #ifdef notyet
@@ -6448,7 +6448,7 @@ mmu_radix_page_array_startup(long pages)
 		domain = vm_phys_domain(ptoa(pfn));
 		l2e = pmap_pml2e(kernel_pmap, va);
 		if ((be64toh(*l2e) & PG_V) == 0) {
-			pa = vm_phys_early_alloc(domain, PAGE_SIZE);
+			pa = vm_phys_early_alloc(PAGE_SIZE, domain);
 			dump_add_page(pa);
 			pagezero(PHYS_TO_DMAP(pa));
 			pde_store(l2e, (pml2_entry_t)pa);
@@ -6456,7 +6456,7 @@ mmu_radix_page_array_startup(long pages)
 		pde = pmap_l2e_to_l3e(l2e, va);
 		if ((be64toh(*pde) & PG_V) != 0)
 			panic("Unexpected pde %p", pde);
-		pa = vm_phys_early_alloc(domain, L3_PAGE_SIZE);
+		pa = vm_phys_early_alloc(L3_PAGE_SIZE, domain);
 		for (i = 0; i < NPDEPG; i++)
 			dump_add_page(pa + i * PAGE_SIZE);
 		newl3 = (pml3_entry_t)(pa | RPTE_EAA_P | RPTE_EAA_R | RPTE_EAA_W);
