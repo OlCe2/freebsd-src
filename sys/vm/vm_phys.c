@@ -1922,117 +1922,466 @@ vm_phys_early_add_seg(vm_paddr_t start, vm_paddr_t end)
 }
 
 /*
- * This routine allocates NUMA node specific memory before the page
- * allocator is bootstrapped.
+ * Selects a range of memory within the passed range.
+ *
+ * If VM_PHYS_EAF_CHUNK_START is passed, memory is selected at start of the
+ * range.  Conversely, if VM_PHYS_EAF_CHUNK_END is passed, it is selected at the
+ * end.
+ *
+ * If neither flags have been passed, selection happens from the front for
+ * requests with PAGE_SIZE alignment and from the back for requests with higher
+ * alignment to reduce fragmentation, as allocations aligned to PAGE_SIZE are
+ * common.  In this case, '*flags' is updated with VM_PHYS_EAF_CHUNK_START or
+ * VM_PHYS_EAF_CHUNK_END accordingly.
+ *
+ * Can return:
+ * - 0          Success, '*pa' is usable.
+ * - ENOMEM     Self-explanatory.
+ *
+ * '*flags' may be modified as explained above even on failure.
+ */
+static int
+vm_phys_early_select_from_range(const size_t size, const vm_paddr_t alignment,
+    const vm_paddr_t start, const vm_paddr_t end, u_int *const flags,
+    vm_paddr_t *const pa)
+{
+	vm_paddr_t where;
+
+	MPASS(start <= end);
+	MPASS(alignment != 0);
+	MPASS(bitcount(*flags & (VM_PHYS_EAF_CHUNK_START |
+	    VM_PHYS_EAF_CHUNK_END)) <= 1);
+
+	if ((*flags & (VM_PHYS_EAF_CHUNK_START |
+	    VM_PHYS_EAF_CHUNK_END)) == 0)
+		*flags |= alignment <= PAGE_SIZE ?
+		    VM_PHYS_EAF_CHUNK_START : VM_PHYS_EAF_CHUNK_END;
+
+	if ((*flags & VM_PHYS_EAF_CHUNK_END) != 0) {
+		/* Prevents underflow just below. */
+		if (size > end - start)
+			return (ENOMEM);
+		where = rounddown(end - size, alignment);
+		if (where < start)
+			return (ENOMEM);
+	}
+	else {
+		where = roundup(start, alignment);
+		if (where + size < where || where + size > end)
+			return (ENOMEM);
+	}
+
+	MPASS(start <= where && where + size > where && where + size <= end &&
+	    where % alignment == 0);
+	*pa = where;
+	return (0);
+}
+
+/*
+ * Allowed flags: Same as for vm_phys_early_select_from_range() above.
+ *
+ * Can return:
+ * - 0          'pa' is filled with some usable value.
+ * - ENOMEM     Self-explanatory.
+ * - EDOM       The memory domain does not match the passed chunk.
+ */
+static int
+vm_phys_early_select_from_chunk(const size_t size, const vm_paddr_t alignment,
+    const int chunk_start_idx, const int domain, u_int *const flags,
+    vm_paddr_t *const pa)
+{
+	const vm_paddr_t start = phys_avail[chunk_start_idx];
+	const vm_paddr_t end = phys_avail[chunk_start_idx + 1];
+
+	MPASS(chunk_start_idx % 2 == 0);
+
+	/*
+	 * As phys_avail[] only contains boundaries and no other information,
+	 * such as the domain, and is not encapsulated to be protected from
+	 * arbitrary changes, the safest thing we can do is recompute the
+	 * domains for each candidate chunk each time this function is called
+	 * (this is what vm_phys_domain_match() does).
+	 *
+	 * XXXOC - The phys_avail[] machinery should be encapsulated.  The most
+	 * promising way for that is to replace it completely with the services
+	 * from 'subr_physmem.c' once they have been suitably augmented, e.g.,
+	 * to handle domains.
+	 */
+	if (domain == -1 || domain == vm_phys_domain_match(-1, start, end))
+		return (vm_phys_early_select_from_range(size, alignment,
+		    start, end, flags, pa));
+	else
+		return (EDOM);
+}
+
+static void
+vm_phys_print_align_waste(vm_paddr_t waste, bool requested)
+{
+	if (waste != 0)
+		printf("vm_phys_early_alloc: Wasting %ju bytes for "
+		    "alignment (%s).\n",
+		    (uintmax_t)waste,
+		    requested ? "as requested" :
+		    "not enough slots in phys_avail[]");
+}
+
+static int
+vm_phys_early_find_chunk_at_boundaries(size_t alloc_size, vm_paddr_t alignment,
+    int *const chunk_start_idx, int domain, u_int *const flags,
+    vm_paddr_t *const pa)
+{
+	vm_paddr_t first_pa, last_pa;
+	u_int first_flags, last_flags;
+	int first_error, last_error;
+	int last_index;
+
+	MPASS(*chunk_start_idx == -1 && ((*flags & (VM_PHYS_EAF_CHUNK_START |
+	    VM_PHYS_EAF_CHUNK_END)) == 0) &&
+	    ((*flags & VM_PHYS_EAF_ADDR_BOUNDARIES) != 0));
+
+	/*
+	 * We try allocating from both boundaries as, depending on the
+	 * history of allocations in the boundary chunks and the
+	 * requested alignment, we may be able to allocate from the
+	 * smallest one and not from the largest one.
+	 */
+
+	/* Does allocating from the start works? */
+	first_flags = *flags | VM_PHYS_EAF_CHUNK_START;
+	first_error = vm_phys_early_select_from_chunk(alloc_size, alignment,
+	    0, domain, &first_flags, &first_pa);
+
+	/*
+	 * And from the end?
+	 *
+	 * We might be considering the previous chunk a second time (if
+	 * there is only one in phys_avail[]).  This is deliberate as we
+	 * are switching to allocate at the end, and in some edge cases
+	 * this may succeed even if the attempt above failed.
+	 */
+	last_index = vm_phys_avail_count() - 2;
+	last_flags = *flags | VM_PHYS_EAF_CHUNK_END;
+	last_error = vm_phys_early_select_from_chunk(alloc_size, alignment,
+	    last_index, domain, &last_flags, &last_pa);
+
+	/*
+	 * If both can succeed, we apply the same anti-fragmentation policy as
+	 * vm_phys_early_select_from_range() does for a single chunk but here
+	 * considering the first and last chunk together (our goal is to
+	 * allocate at boundaries, but which one does not really matter).
+	 */
+	if (first_error == 0 && last_error == 0) {
+		if (alignment <= PAGE_SIZE)
+			last_error = ENOENT;
+		else
+			first_error = ENOENT;
+	} else if (first_error != 0 && last_error != 0)
+		/* All failed.  Preferentially return ENOMEM. */
+		return (first_error == ENOMEM || last_error == ENOMEM ?
+		    ENOMEM : first_error); /* Currently, returns EDOM. */
+	if (first_error == 0) {
+		MPASS(last_error != 0);
+		*chunk_start_idx = 0;
+		*flags = first_flags;
+		*pa = first_pa;
+	} else {
+		MPASS(last_error == 0);
+		*chunk_start_idx = last_index;
+		*flags = last_flags;
+		*pa = last_pa;
+	}
+	*flags |= VM_PHYS_EAF_DISCARD_ON_ALIGN;
+	return (0);
+}
+
+static int
+vm_phys_early_find_biggest_chunk(size_t alloc_size, vm_paddr_t alignment,
+    int *const chunk_start_idx, int domain, u_int *const flags,
+    vm_paddr_t *const pa)
+{
+	vm_paddr_t biggest_size, selected_pa;
+	u_int selected_flags;
+	int i;
+
+	/*
+	 * Search for the biggest chunk that works.
+	 *
+	 * In some edge cases with respect to aligment, the biggest chunk may
+	 * not work while another still may (in this case, the machine is
+	 * unlikely to boot, except if the requested alignment is huge).
+	 */
+	biggest_size = 0;
+	for (i = 0; phys_avail[i + 1] != 0; i += 2) {
+		const vm_paddr_t size = vm_phys_avail_size(i);
+		vm_paddr_t chunk_pa;
+		u_int chunk_flags = *flags;
+		int error;
+
+		error = vm_phys_early_select_from_chunk(alloc_size, alignment,
+		    i, domain, &chunk_flags, &chunk_pa);
+		if (error == 0 && size > biggest_size) {
+			biggest_size = size;
+			*chunk_start_idx = i;
+			selected_flags = chunk_flags;
+			selected_pa = chunk_pa;
+		}
+	}
+	if (biggest_size == 0)
+		return (ENOMEM);
+	*flags = selected_flags;
+	*pa = selected_pa;
+	return (0);
+}
+
+/*
+ * Choose a suitable chunk.
+ *
+ * Internal sub-routine of vm_phys_early_alloc_int().
+ *
+ * Regardless of success, may change '*chunk_start_idx', '*flags' and '*pa'.
+ */
+static int
+vm_phys_early_find_chunk(size_t alloc_size, vm_paddr_t alignment,
+    int *const chunk_start_idx, int domain, u_int *const flags,
+    vm_paddr_t *const pa)
+{
+	MPASS(*chunk_start_idx == -1);
+
+	if ((*flags & VM_PHYS_EAF_ADDR_BOUNDARIES) != 0)
+		return (vm_phys_early_find_chunk_at_boundaries(alloc_size,
+		    alignment, chunk_start_idx, domain, flags, pa));
+	else
+		return (vm_phys_early_find_biggest_chunk(alloc_size,
+		    alignment, chunk_start_idx, domain, flags, pa));
+}
+
+/*
+ * (internal) Allocates contiguous memory before page allocator bootstrap.
+ *
+ * Use thin wrappers vm_phys_early_alloc_ex() and vm_phys_early_alloc_ex_err().
+ *
+ * Allocates from phys_avail[].
+ *
+ * Currently, PAGE_SIZE aligned requests are served from a chunk's end, and
+ * others from its start, to avoid fragmentation.  You should however not rely
+ * on this implementation detail, and instead explicitly use either of the
+ * VM_PHYS_EAF_CHUNK_START and VM_PHYS_EAF_CHUNK_END flags to force allocation at
+ * a particular boundary.
+ *
+ * - 'alloc_size' cannot be 0 (probable programming error), and otherwise
+ *   is silently rounded up to a multiple of PAGE_SIZE.
+ * - 'alignment' is the minimum alignment expected.  Any value smaller than
+ *   PAGE_SIZE will be silently replaced by PAGE_SIZE.  It doesn't need to be
+ *   a power of two.
+ * - 'chunk_start_idx', if not -1, indicates to forcibly allocate from that
+ *   chunk in phys_avail[] (it must be the index of the chunk's start address).
+ * - 'domain', if not -1, indicates to forcibly allocate from that domain.
+ * - 'flags' may contain any of the following flags:
+ *   - VM_PHYS_EAF_ALLOW_FAILURE: If the allocation cannot be fulfilled, instead
+ *     of panicking, the function returns one of ENOMEM (not enough contiguous
+ *     memory, with the specified constraints) or EDOM (if some specific chunk
+ *     and domain were requested but are incompatible).
+ *   - VM_PHYS_EAF_DISCARD_ON_ALIGN: Do not add back the portion of memory
+ *     skipped to satisfy the alignment request to phys_avail[].  Implied by
+ *     VM_PHYS_EAF_ADDR_BOUNDARIES.
+ *   - VM_PHYS_EAF_ADDR_BOUNDARIES: Allocate memory either at start of the first
+ *     chunk (lowest addresses) or at end of the last chunk (highest addresses).
+ *     Incompatible with 'chunk_start_idx' not being -1.
+ *   - VM_PHYS_EAF_CHUNK_START: Once a chunk has been selected (or was
+ *     explicitly requested), always allocate the requested memory from its
+ *     start.  Incompatible with VM_PHYS_EAF_ADDR_BOUNDARIES.
+ *   - VM_PHYS_EAF_CHUNK_END: Same as VM_PHYS_EAF_CHUNK_START, but instead
+ *     forces allocation near some chunk's end.  Incompatible with
+ *     VM_PHYS_EAF_ADDR_BOUNDARIES and VM_PHYS_EAF_CHUNK_START.
+ *
+ * Returns 0 on success, and on failure either panics or returns an error value
+ * depending on absence/presence of VM_PHYS_EAF_ALLOW_FAILURE (see above).
+ */
+static int
+vm_phys_early_alloc_int(size_t alloc_size, vm_paddr_t alignment,
+    int chunk_start_idx, int domain, u_int flags, vm_paddr_t *ppa)
+{
+	vm_paddr_t pa;
+	int error;
+
+	MPASS2(vm_phys_early_nsegs == -1,
+	    "Can't be called before vm_phys_early_startup().");
+	if (alloc_size == 0)
+		panic("%s: 'alloc_size' is 0 (unsupported).", __func__);
+	/*
+	 * Next test is just to catch programming errors, as there are no
+	 * practical needs to align to more than 1GB (even on 64-bit platforms).
+	 * This isn't a limitation of the code though.
+	 */
+	if (alignment > (1u << 30))
+		panic("%s: 'alignment' (%#jx) too big", __func__,
+		    (uintmax_t)alignment);
+	if (chunk_start_idx != -1 && !(chunk_start_idx >= 0 &&
+	    chunk_start_idx < PHYS_AVAIL_ENTRIES &&
+	    chunk_start_idx % 2 == 0))
+		panic("%s: Invalid 'chunk_start_idx' (%d).", __func__,
+		    chunk_start_idx);
+	if (chunk_start_idx >= vm_phys_avail_count())
+		panic("%s: Out-of-bounds 'chunk_start_idx' (%d).", __func__,
+		    chunk_start_idx);
+	if (!(-1 <= domain && domain < vm_ndomains))
+		panic("%s: Invalid 'domain' (%d; vm_ndomains: %d).", __func__,
+		    domain, vm_ndomains);
+	if ((flags & ~(VM_PHYS_EAF_ALLOW_FAILURE | VM_PHYS_EAF_DISCARD_ON_ALIGN |
+	    VM_PHYS_EAF_ADDR_BOUNDARIES | VM_PHYS_EAF_CHUNK_START |
+	    VM_PHYS_EAF_CHUNK_END)) != 0)
+		panic("%s: Invalid 'flags' (%#x).", __func__, flags);
+	if ((flags & VM_PHYS_EAF_ADDR_BOUNDARIES) != 0 && chunk_start_idx != -1)
+		panic("%s: Cannot both request a specific chunk (%d) and "
+		    "pass VM_PHYS_EAF_ADDR_BOUNDARIES.", __func__,
+		    chunk_start_idx);
+	if (bitcount(flags & (VM_PHYS_EAF_ADDR_BOUNDARIES |
+	    VM_PHYS_EAF_CHUNK_START | VM_PHYS_EAF_CHUNK_END)) > 1)
+		panic("%s: Incompatible 'flags' (%#x).", __func__, flags);
+
+	alloc_size = round_page(alloc_size);
+	if (alignment < PAGE_SIZE)
+		alignment = PAGE_SIZE;
+	if ((flags & VM_PHYS_EAF_ADDR_BOUNDARIES) != 0)
+		flags |= VM_PHYS_EAF_DISCARD_ON_ALIGN;
+
+	/*
+	 * Determine the chunk to allocate from.
+	 */
+	if (chunk_start_idx != -1)
+		/*
+		 * Check that the requested chunk is compatible with 'domain',
+		 * and that we can actually grab the necessary size from it.
+		 */
+		error = vm_phys_early_select_from_chunk(alloc_size, alignment,
+		    chunk_start_idx, domain, &flags, &pa);
+	else
+		/*
+		 * Search for a suitable chunk.
+		 */
+		error = vm_phys_early_find_chunk(alloc_size, alignment,
+		    &chunk_start_idx, domain, &flags, &pa);
+	if (error != 0)
+		goto fail;
+
+	/* Sub-routines above must ensure that one of these is set. */
+	MPASS((flags & (VM_PHYS_EAF_CHUNK_START | VM_PHYS_EAF_CHUNK_END)) != 0);
+	/*
+	 * Actually remove the allocation from the selected chunk, and try to
+	 * split the alignment bytes in a new chunk except if asked not to.
+	 */
+	error = ENOSPC;
+	if ((flags & VM_PHYS_EAF_CHUNK_END) != 0) {
+		if ((flags & VM_PHYS_EAF_DISCARD_ON_ALIGN) == 0)
+			error = vm_phys_avail_split(pa + alloc_size,
+			    chunk_start_idx);
+		if (error == ENOSPC && bootverbose)
+			vm_phys_print_align_waste
+			    (phys_avail[chunk_start_idx + 1] - (pa + alloc_size),
+			    (flags & VM_PHYS_EAF_DISCARD_ON_ALIGN) != 0);
+		phys_avail[chunk_start_idx + 1] = pa;
+	} else {
+		if ((flags & VM_PHYS_EAF_DISCARD_ON_ALIGN) == 0) {
+			error = vm_phys_avail_split(pa, chunk_start_idx);
+			if (error == 0) {
+				vm_phys_avail_check(chunk_start_idx);
+				/*
+				 * The allocated portion comes from the second
+				 * chunk after the split.
+				 */
+				chunk_start_idx += 2;
+			}
+		}
+		if (error == ENOSPC && bootverbose)
+			vm_phys_print_align_waste
+			    (pa - phys_avail[chunk_start_idx],
+			    (flags & VM_PHYS_EAF_DISCARD_ON_ALIGN) != 0);
+		phys_avail[chunk_start_idx] = pa + alloc_size;
+	}
+	vm_phys_avail_check(chunk_start_idx);
+	*ppa = pa;
+	return (0);
+
+fail:
+	MPASS(error != 0);
+
+	if ((flags & VM_PHYS_EAF_ALLOW_FAILURE) != 0)
+		return (error);
+
+	switch (error) {
+	case ENOMEM:
+		panic("%s: Not enough memory in requested chunk %d: "
+		    "alloc_size = %zu, alignment = %#jx, "
+		    "chunk = %jx - %jx (size %ju)", __func__,
+		    chunk_start_idx, alloc_size, (uintmax_t)alignment,
+		    (uintmax_t)phys_avail[chunk_start_idx],
+		    (uintmax_t)phys_avail[chunk_start_idx + 1],
+		    (uintmax_t)(phys_avail[chunk_start_idx + 1] -
+		    phys_avail[chunk_start_idx]));
+	case EDOM:
+		panic("%s: Requested chunk %d not in requested domain %d",
+		    __func__, chunk_start_idx, domain);
+	default:
+		panic("%s: Error %d (please add some pretty-print for it)",
+		    __func__, error);
+	}
+}
+
+/*
+ * Allocates contiguous memory before page allocator bootstrap, panics on error.
+ *
+ * This is a thin wrapper around vm_phys_early_alloc_int() that does return the
+ * allocated physical address (instead of passing it via 'ppa').  As it does not
+ * return an error code, it will panic if the allocation cannot be fulfilled.
+ * The documentation for vm_phys_early_alloc_int() applies, except that
+ * VM_PHYS_EAF_ALLOW_FAILURE cannot be passed into 'flags'.
+ */
+vm_paddr_t
+vm_phys_early_alloc_ex(size_t alloc_size, vm_paddr_t alignment,
+    int chunk_start_idx, int domain, u_int flags)
+{
+	vm_paddr_t pa;
+	int error __diagused;
+
+	if ((flags & VM_PHYS_EAF_ALLOW_FAILURE) != 0)
+		/*
+		 * Not allowed, as it defeats the purpose of this void-returning
+		 * thin wrapper function.
+		 */
+		panic("%s: Flag VM_PHYS_EAF_ALLOW_FAILURE not allowed.",
+		    __func__);
+
+	error = vm_phys_early_alloc_int(alloc_size, alignment, chunk_start_idx,
+	    domain, flags, &pa);
+	MPASS(error == 0);
+	return (pa);
+}
+
+/*
+ * Allocates contiguous memory before page allocator bootstrap.
+ *
+ * This is a thin wrapper around vm_phys_early_alloc_int() that can return
+ * errors.  The documentation for vm_phys_early_alloc_int() applies, with
+ * VM_PHYS_EAF_ALLOW_FAILURE forced into 'flags'.
+ */
+int __result_use_check
+vm_phys_early_alloc_ex_err(size_t alloc_size, vm_paddr_t alignment,
+    int chunk_start_idx, int domain, u_int flags, vm_paddr_t *ppa)
+{
+	return (vm_phys_early_alloc_int(alloc_size, alignment, chunk_start_idx,
+	    domain, flags | VM_PHYS_EAF_ALLOW_FAILURE, ppa));
+}
+
+/*
+ * Simpler wrapper for vm_phys_early_alloc_ex().
+ *
+ * Can't request a specific alignment, chunk, nor pass flags.  In particular, it
+ * will panic on failure.
  */
 vm_paddr_t
 vm_phys_early_alloc(size_t alloc_size, int domain)
 {
-	int i, biggestone;
-	vm_paddr_t pa, mem_start, mem_end, size, biggestsize, align_off;
-
-	KASSERT(domain == -1 || (domain >= 0 && domain < vm_ndomains),
-	    ("%s: invalid domain index %d", __func__, domain));
-	MPASS(alloc_size != 0);
-
-	/* Physical segment constraint for the phys_avail[] selection below. */
-	mem_start = 0;
-	mem_end = -1;
-#ifdef NUMA
-	/*
-	 * Constrain the phys_avail[] selection with the biggest segment in the
-	 * desired domain.  We proceed with this search even if 'domain' is -1,
-	 * as allocating from the biggest chunk generally reduces the risk of
-	 * depletion of any domain.
-	 */
-	if (mem_affinity != NULL) {
-		biggestsize = 0;
-		biggestone = -1;
-		for (i = 0;; i++) {
-			size = mem_affinity[i].end - mem_affinity[i].start;
-			if (size == 0)
-				/* End of mem_affinity[]. */
-				break;
-			if (domain != -1 && mem_affinity[i].domain != domain)
-				continue;
-			if (size > biggestsize) {
-				biggestone = i;
-				biggestsize = size;
-			}
-		}
-		if (biggestone == -1)
-			panic("%s: No mem affinity range for domain %d",
-			    __func__, domain);
-		mem_start = mem_affinity[biggestone].start;
-		mem_end = mem_affinity[biggestone].end;
-	}
-#endif
-
-	/*
-	 * Now find biggest physical segment in within the desired
-	 * numa domain.
-	 */
-	biggestsize = 0;
-	biggestone = -1;
-	for (i = 0; phys_avail[i + 1] != 0; i += 2) {
-		/*
-		 * Skip regions that are out of range.  phys_avail[] segments
-		 * cannot span the bounds of each physical segments of
-		 * mem_affinity[] (thanks to vm_phys_early_startup()).
-		 */
-		if (phys_avail[i] >= mem_end || phys_avail[i + 1] <= mem_start)
-			continue;
-		size = vm_phys_avail_size(i);
-		if (size > biggestsize) {
-			biggestone = i;
-			biggestsize = size;
-		}
-	}
-	if (biggestone == -1)
-		panic("%s: No physical range for domain %d", __func__, domain);
-
-	/*
-	 * Because phys_avail[] bounds have been aligned to PAGE_SIZE,
-	 * at this point we know there is at least one page available.
-	 */
-	MPASS(biggestsize >= PAGE_SIZE);
-
-	alloc_size = round_page(alloc_size);
-
-	/*
-	 * Grab single pages from the front to reduce fragmentation.
-	 */
-	if (alloc_size == PAGE_SIZE) {
-		pa = phys_avail[biggestone];
-		phys_avail[biggestone] += PAGE_SIZE;
-		vm_phys_avail_check(biggestone);
-		return (pa);
-	}
-
-	/*
-	 * Naturally align large allocations.
-	 */
-	align_off = phys_avail[biggestone + 1] & (alloc_size - 1);
-	if (alloc_size + align_off > biggestsize)
-		panic("%s: No large enough chunk: alloc_size = %zu, "
-		    "align_off = %ju, biggestsize = %ju, biggestone = %d "
-		    "(%jx to %jx)", __func__, alloc_size, (uintmax_t)align_off,
-		    (uintmax_t)biggestsize, biggestone, phys_avail[biggestone],
-		    phys_avail[biggestone + 1]);
-	if (align_off != 0 &&
-	    vm_phys_avail_split(phys_avail[biggestone + 1] - align_off,
-	    biggestone) != 0) {
-		/* No more physical segments available.  Wasting memory. */
-		phys_avail[biggestone + 1] -= align_off;
-		if (bootverbose)
-			printf("%s: Wasting %ju bytes for alignment.\n",
-			    __func__, (uintmax_t)align_off);
-	}
-
-	phys_avail[biggestone + 1] -= alloc_size;
-	vm_phys_avail_check(biggestone);
-	pa = phys_avail[biggestone + 1];
-	return (pa);
+	return (vm_phys_early_alloc_ex(alloc_size, alloc_size, -1, domain, 0));
 }
 
 void
