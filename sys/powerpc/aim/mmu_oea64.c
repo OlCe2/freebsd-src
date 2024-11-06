@@ -3484,7 +3484,8 @@ moea64_page_array_startup(long pages)
 		size = round_page(size * sizeof(struct vm_page));
 		needed = size;
 		size = roundup2(size, moea64_large_page_size);
-		pa = vm_phys_early_alloc(size, i);
+		pa = vm_phys_early_alloc_ex(size, moea64_large_page_size, -1,
+		    i, 0);
 		vm_page_array_size += size / sizeof(struct vm_page);
 		moea64_map_range(va, pa, size >> PAGE_SHIFT);
 		/* Scoot up domain 0, to reduce the domain page overlap. */

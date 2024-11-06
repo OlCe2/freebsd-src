@@ -6456,7 +6456,8 @@ mmu_radix_page_array_startup(long pages)
 		pde = pmap_l2e_to_l3e(l2e, va);
 		if ((be64toh(*pde) & PG_V) != 0)
 			panic("Unexpected pde %p", pde);
-		pa = vm_phys_early_alloc(L3_PAGE_SIZE, domain);
+		pa = vm_phys_early_alloc_ex(L3_PAGE_SIZE, L3_PAGE_SIZE, -1,
+		    domain, 0);
 		for (i = 0; i < NPDEPG; i++)
 			dump_add_page(pa + i * PAGE_SIZE);
 		newl3 = (pml3_entry_t)(pa | RPTE_EAA_P | RPTE_EAA_R | RPTE_EAA_W);

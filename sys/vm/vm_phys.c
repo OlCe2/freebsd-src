@@ -2373,11 +2373,15 @@ vm_phys_early_alloc_ex_err(size_t alloc_size, vm_paddr_t alignment,
  *
  * Can't request a specific alignment, chunk, nor pass flags.  In particular, it
  * will panic on failure.
+ *
+ * CAUTION: Contrary to the previous vm_phys_early_alloc() implementation, it
+ * only aligns the requested memory on PAGE_SIZE, regardless of 'alloc_size'.
+ * If a greater alignment is needed, use vm_phys_early_alloc_ex() instead.
  */
 vm_paddr_t
 vm_phys_early_alloc(size_t alloc_size, int domain)
 {
-	return (vm_phys_early_alloc_ex(alloc_size, alloc_size, -1, domain, 0));
+	return (vm_phys_early_alloc_ex(alloc_size, PAGE_SIZE, -1, domain, 0));
 }
 
 void

@@ -5100,7 +5100,7 @@ pmap_page_array_startup(long pages)
 		pde = pmap_pdpe_to_pde(pdpe, va);
 		if ((*pde & X86_PG_V) != 0)
 			panic("Unexpected pde");
-		pa = vm_phys_early_alloc(NBPDR, domain);
+		pa = vm_phys_early_alloc_ex(NBPDR, NBPDR, -1, domain, 0);
 		for (i = 0; i < NPDEPG; i++)
 			dump_add_page(pa + i * PAGE_SIZE);
 		newpdir = (pd_entry_t)(pa | X86_PG_V | X86_PG_RW | X86_PG_A |
