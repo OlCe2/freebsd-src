@@ -2183,6 +2183,10 @@ vm_phys_early_find_chunk(size_t alloc_size, vm_paddr_t alignment,
  *   - VM_PHYS_EAF_ADDR_BOUNDARIES: Allocate memory either at start of the first
  *     chunk (lowest addresses) or at end of the last chunk (highest addresses).
  *     Incompatible with 'chunk_start_idx' not being -1.
+ *   - VM_PHYS_EAF_ADDR_BOUNDARIES_FIRST: Proceed first as if
+ *     VM_PHYS_EAF_ADDR_BOUNDARIES had been specified and ignoring incompatible
+ *     arguments and flags, and if that fails, falls back to the best fit
+ *     algorithm.  Incompatible with VM_PHYS_EAF_ADDR_BOUNDARIES.
  *   - VM_PHYS_EAF_CHUNK_START: Once a chunk has been selected (or was
  *     explicitly requested), always allocate the requested memory from its
  *     start.  Incompatible with VM_PHYS_EAF_ADDR_BOUNDARIES.
@@ -2224,9 +2228,13 @@ vm_phys_early_alloc_int(size_t alloc_size, vm_paddr_t alignment,
 		panic("%s: Invalid 'domain' (%d; vm_ndomains: %d).", __func__,
 		    domain, vm_ndomains);
 	if ((flags & ~(VM_PHYS_EAF_ALLOW_FAILURE | VM_PHYS_EAF_DISCARD_ON_ALIGN |
-	    VM_PHYS_EAF_ADDR_BOUNDARIES | VM_PHYS_EAF_CHUNK_START |
-	    VM_PHYS_EAF_CHUNK_END)) != 0)
+	    VM_PHYS_EAF_ADDR_BOUNDARIES | VM_PHYS_EAF_ADDR_BOUNDARIES_FIRST |
+	    VM_PHYS_EAF_CHUNK_START | VM_PHYS_EAF_CHUNK_END)) != 0)
 		panic("%s: Invalid 'flags' (%#x).", __func__, flags);
+	if ((flags & VM_PHYS_EAF_ADDR_BOUNDARIES) != 0 &&
+	    (flags & VM_PHYS_EAF_ADDR_BOUNDARIES_FIRST) != 0)
+		panic("%s: Incompatible flags VM_PHYS_EAF_ADDR_BOUNDARIES and "
+		    "VM_PHYS_EAF_ADDR_BOUNDARIES_FIRST", __func__);
 	if ((flags & VM_PHYS_EAF_ADDR_BOUNDARIES) != 0 && chunk_start_idx != -1)
 		panic("%s: Cannot both request a specific chunk (%d) and "
 		    "pass VM_PHYS_EAF_ADDR_BOUNDARIES.", __func__,
@@ -2238,12 +2246,29 @@ vm_phys_early_alloc_int(size_t alloc_size, vm_paddr_t alignment,
 	alloc_size = round_page(alloc_size);
 	if (alignment < PAGE_SIZE)
 		alignment = PAGE_SIZE;
-	if ((flags & VM_PHYS_EAF_ADDR_BOUNDARIES) != 0)
-		flags |= VM_PHYS_EAF_DISCARD_ON_ALIGN;
 
 	/*
 	 * Determine the chunk to allocate from.
 	 */
+	if ((flags & VM_PHYS_EAF_ADDR_BOUNDARIES_FIRST) != 0) {
+		u_int tmp_flags = (flags & ~(VM_PHYS_EAF_CHUNK_START |
+		    VM_PHYS_EAF_CHUNK_END)) | VM_PHYS_EAF_ADDR_BOUNDARIES;
+		int tmp_idx = -1;
+
+		error = vm_phys_early_find_chunk_at_boundaries(alloc_size,
+		    alignment, &tmp_idx, domain, &tmp_flags, &pa);
+		if (error == 0) {
+			flags = tmp_flags;
+			chunk_start_idx = tmp_idx;
+			goto alloc_in_chunk;
+		}
+		/*
+		 * Allocation at boundaries didn't work.  Continue as if
+		 * VM_PHYS_EAF_ADDR_BOUNDARIES_FIRST had not been present.  We
+		 * don't need to clear this flag as no code except the
+		 * surrounding 'if' tests for it.
+		 */
+	}
 	if (chunk_start_idx != -1)
 		/*
 		 * Check that the requested chunk is compatible with 'domain',
@@ -2260,6 +2285,7 @@ vm_phys_early_alloc_int(size_t alloc_size, vm_paddr_t alignment,
 	if (error != 0)
 		goto fail;
 
+alloc_in_chunk:
 	/* Sub-routines above must ensure that one of these is set. */
 	MPASS((flags & (VM_PHYS_EAF_CHUNK_START | VM_PHYS_EAF_CHUNK_END)) != 0);
 	/*

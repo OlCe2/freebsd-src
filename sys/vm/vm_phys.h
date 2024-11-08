@@ -82,11 +82,12 @@ bool vm_phys_unfree_page(vm_paddr_t pa);
 int vm_phys_mem_affinity(int f, int t);
 void vm_phys_early_add_seg(vm_paddr_t start, vm_paddr_t end);
 
-#define	VM_PHYS_EAF_ALLOW_FAILURE	(1 << 0)
-#define	VM_PHYS_EAF_DISCARD_ON_ALIGN	(1 << 1)
-#define	VM_PHYS_EAF_ADDR_BOUNDARIES	(1 << 2)
-#define	VM_PHYS_EAF_CHUNK_START		(1 << 3)
-#define	VM_PHYS_EAF_CHUNK_END		(1 << 4)
+#define	VM_PHYS_EAF_ALLOW_FAILURE		(1 << 0)
+#define	VM_PHYS_EAF_DISCARD_ON_ALIGN		(1 << 1)
+#define	VM_PHYS_EAF_ADDR_BOUNDARIES		(1 << 2)
+#define	VM_PHYS_EAF_ADDR_BOUNDARIES_FIRST	(1 << 3)
+#define	VM_PHYS_EAF_CHUNK_START			(1 << 4)
+#define	VM_PHYS_EAF_CHUNK_END			(1 << 5)
 vm_paddr_t vm_phys_early_alloc_ex(size_t alloc_size, vm_paddr_t alignment,
     int chunk_start_idx, int domain, u_int flags);
 int __result_use_check vm_phys_early_alloc_ex_err(size_t alloc_size,
