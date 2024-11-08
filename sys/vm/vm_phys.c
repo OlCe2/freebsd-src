@@ -2095,22 +2095,18 @@ vm_phys_early_find_chunk_at_boundaries(size_t alloc_size, vm_paddr_t alignment,
 }
 
 static int
-vm_phys_early_find_biggest_chunk(size_t alloc_size, vm_paddr_t alignment,
+vm_phys_early_find_best_fit_chunk(size_t alloc_size, vm_paddr_t alignment,
     int *const chunk_start_idx, int domain, u_int *const flags,
     vm_paddr_t *const pa)
 {
-	vm_paddr_t biggest_size, selected_pa;
+	vm_paddr_t smallest_size, selected_pa;
 	u_int selected_flags;
 	int i;
 
 	/*
-	 * Search for the biggest chunk that works.
-	 *
-	 * In some edge cases with respect to aligment, the biggest chunk may
-	 * not work while another still may (in this case, the machine is
-	 * unlikely to boot, except if the requested alignment is huge).
+	 * Search for the smallest chunk that works.
 	 */
-	biggest_size = 0;
+	smallest_size = -1;
 	for (i = 0; phys_avail[i + 1] != 0; i += 2) {
 		const vm_paddr_t size = vm_phys_avail_size(i);
 		vm_paddr_t chunk_pa;
@@ -2119,14 +2115,14 @@ vm_phys_early_find_biggest_chunk(size_t alloc_size, vm_paddr_t alignment,
 
 		error = vm_phys_early_select_from_chunk(alloc_size, alignment,
 		    i, domain, &chunk_flags, &chunk_pa);
-		if (error == 0 && size > biggest_size) {
-			biggest_size = size;
+		if (error == 0 && size < smallest_size) {
+			smallest_size = size;
 			*chunk_start_idx = i;
 			selected_flags = chunk_flags;
 			selected_pa = chunk_pa;
 		}
 	}
-	if (biggest_size == 0)
+	if (smallest_size == -1)
 		return (ENOMEM);
 	*flags = selected_flags;
 	*pa = selected_pa;
@@ -2151,7 +2147,7 @@ vm_phys_early_find_chunk(size_t alloc_size, vm_paddr_t alignment,
 		return (vm_phys_early_find_chunk_at_boundaries(alloc_size,
 		    alignment, chunk_start_idx, domain, flags, pa));
 	else
-		return (vm_phys_early_find_biggest_chunk(alloc_size,
+		return (vm_phys_early_find_best_fit_chunk(alloc_size,
 		    alignment, chunk_start_idx, domain, flags, pa));
 }
 
