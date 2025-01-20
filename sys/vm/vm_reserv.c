@@ -1445,10 +1445,10 @@ vm_reserv_size(int level)
  * Allocates the virtual and physical memory required by the reservation
  * management system's data structures, in particular, the reservation array.
  */
-vm_paddr_t
-vm_reserv_startup(vm_offset_t *vaddr, vm_paddr_t end)
+void
+vm_reserv_startup(vm_offset_t *vaddr)
 {
-	vm_paddr_t new_end;
+	vm_paddr_t pa, end_pa;
 	vm_pindex_t count;
 	size_t size;
 	int i;
@@ -1481,21 +1481,17 @@ vm_reserv_startup(vm_offset_t *vaddr, vm_paddr_t end)
 	 * Thus, the number of elements in the reservation array can be greater
 	 * than the number of superpages.
 	 */
-	size = count * sizeof(struct vm_reserv);
+	size = round_page(count * sizeof(struct vm_reserv));
 
 	/*
 	 * Allocate and map the physical memory for the reservation array.  The
 	 * next available virtual address is returned by reference.
 	 */
-	new_end = end - round_page(size);
-	vm_reserv_array = (void *)(uintptr_t)pmap_map(vaddr, new_end, end,
+	pa = vm_phys_early_alloc(size);
+	end_pa = pa + size;
+	vm_reserv_array = (void *)(uintptr_t)pmap_map(vaddr, pa, end_pa,
 	    VM_PROT_READ | VM_PROT_WRITE);
 	bzero(vm_reserv_array, size);
-
-	/*
-	 * Return the next available physical address.
-	 */
-	return (new_end);
 }
 
 /*

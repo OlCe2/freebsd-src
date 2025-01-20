@@ -517,12 +517,107 @@ vm_page_init_page(vm_page_t m, vm_paddr_t pa, int segind, int pool)
 	pmap_page_init(m);
 }
 
-#ifndef PMAP_HAS_PAGE_ARRAY
-static vm_paddr_t
-vm_page_array_alloc(vm_offset_t *vaddr, vm_paddr_t end, vm_paddr_t page_range)
+static void
+vm_page_array_alloc(vm_offset_t *vaddr, vm_paddr_t phys_size)
 {
-	vm_paddr_t new_end;
+	vm_paddr_t byte_size, pa;
+#ifdef VM_PHYSSEG_DENSE
+	int error;
+#endif
 
+	MPASS(phys_size % PAGE_SIZE == 0);
+
+#ifdef PMAP_HAS_PAGE_ARRAY
+	if (vm_ndomains > 1) {
+		/*
+		 * We favor backing the vm_page_array[] with pages in the same
+		 * domain as the pages that are described by their 'struct
+		 * vm_page' over the memory optimization below.
+		 */
+		vm_page_array_size = phys_size / PAGE_SIZE;
+		byte_size = vm_page_array_size * sizeof(struct vm_page);
+		pmap_page_array_startup(vm_page_array_size);
+		return;
+	}
+#endif
+
+	/*
+	 * In the VM_PHYSSEG_DENSE case, which considers a single physical range
+	 * of memory covering all physical pages including holes between them,
+	 * if vm_page_array[] can be allocated at the boundaries of that single
+	 * physical range, then we can reduce the latter by the size of the
+	 * pages used to store vm_page_array[] itself when computing
+	 * vm_page_array[]'s size, as these pages themselves do not need to have
+	 * corresponding 'struct vm_page' structures.  This is unfortunately not
+	 * possible if vm_page_array[] is located somewhere else in the single
+	 * physical range, in which case there will be 'struct vm_page'
+	 * structures allocated to describe its pages, even though they are not
+	 * used.  The gain (or waste) is mathematically 'phys_size' *
+	 * (sizeof(struct vm_page) / PAGE_SIZE)^2, where 'phys_size' is the size
+	 * of the covering physical range.  With sizeof(struct vm_page) = 104
+	 * and PAGE_SIZE = 4096, this is about 0.064% of 'phys_size' (e.g., at
+	 * least ~44.3MB on a 64GB machine, possibly a bit more depending on the
+	 * actual physical segments since 'phys_size' covers holes in the middle
+	 * as well).
+	 *
+	 * In the VM_PHYSSEG_SPARSE case, we never need to describe pages
+	 * backing vm_page_array[] with 'struct vm_page' structures, as then
+	 * vm_page_array[] is just a storage of all 'struct vm_page' but without
+	 * the assumption that they map to contiguous pages (they instead map to
+	 * contiguous pages of the successive segments, from which
+	 * vm_page_array[]'s storage has been removed beforehand).
+	 *
+	 * We thus first solve:
+	 *
+	 * "physical memory size" -
+	 *   round_page(page_range * sizeof(struct vm_page)) =
+	 * page_range * PAGE_SIZE
+	 *
+	 * Then, for VM_PHYSSEG_DENSE, we'll effectively check that
+	 * 'page_range' can be allocated from the start or end of the
+	 * physical range.
+	 */
+
+	vm_page_array_size = phys_size / (PAGE_SIZE + sizeof(struct vm_page));
+	byte_size = vm_page_array_size * sizeof(struct vm_page);
+
+#ifdef VM_PHYSSEG_DENSE
+	error = vm_phys_early_alloc_ex_err(byte_size, PAGE_SIZE, -1, -1,
+	    VM_PHYS_EAF_ADDR_BOUNDARIES, &pa);
+	if (error != 0) {
+		/*
+		 * Fallback: We describe the pages backing vm_page_array[]
+		 * itself by 'struct vm_page' structures, as explained above.
+		 */
+		vm_page_array_size = phys_size / PAGE_SIZE;
+		byte_size = vm_page_array_size * sizeof(struct vm_page);
+
+		pa = vm_phys_early_alloc(byte_size);
+		goto vm_page_array_allocated;
+	}
+#else
+	pa = vm_phys_early_alloc(byte_size);
+#endif
+
+	/*
+	 * If the partial bytes remaining are large enough for a page
+	 * (PAGE_SIZE) without a corresponding 'struct vm_page', then after
+	 * allocating vm_page_array[], there will be one more page available
+	 * than there are 'struct vm_page' in vm_page_array[] to represent the
+	 * available pages.  We compensate this by just allocating and
+	 * discarding an extra page at the boundaries (calling
+	 * vm_phys_early_alloc() is enough as it implies boundaries first, and
+	 * allocating a single page there can never fail).
+	 */
+	if (phys_size % (PAGE_SIZE + sizeof(struct vm_page)) >= PAGE_SIZE) {
+		vm_paddr_t tmp_pa = vm_phys_early_alloc(PAGE_SIZE);
+
+		(void)tmp_pa;
+	}
+
+#ifdef VM_PHYSSEG_DENSE
+vm_page_array_allocated:
+#endif
 	/*
 	 * Reserve an unmapped guard page to trap access to vm_page_array[-1].
 	 * However, because this page is allocated from KVM, out-of-bounds
@@ -530,17 +625,9 @@ vm_page_array_alloc(vm_offset_t *vaddr, vm_paddr_t end, vm_paddr_t page_range)
 	 */
 	*vaddr += PAGE_SIZE;
 
-	/*
-	 * Allocate physical memory for the page structures, and map it.
-	 */
-	new_end = trunc_page(end - page_range * sizeof(struct vm_page));
-	vm_page_array = (vm_page_t)pmap_map(vaddr, new_end, end,
+	vm_page_array = (vm_page_t)pmap_map(vaddr, pa, pa + byte_size,
 	    VM_PROT_READ | VM_PROT_WRITE);
-	vm_page_array_size = page_range;
-
-	return (new_end);
 }
-#endif
 
 /*
  *	vm_page_startup:
@@ -557,17 +644,11 @@ vm_page_startup(vm_offset_t vaddr)
 	struct vm_domain *vmd;
 	vm_page_t m;
 	char *list, *listend;
-	vm_paddr_t end, high_avail, low_avail, new_end, size;
-	vm_paddr_t page_range __unused;
-	vm_paddr_t last_pa, pa, startp, endp;
+	vm_paddr_t phys_size, low_avail, high_avail;
+	vm_paddr_t pa, start_pa, end_pa;
 	u_long pagecount;
 #if MINIDUMP_PAGE_TRACKING
 	u_long vm_page_dump_size;
-#endif
-	int biggestone, i, segind;
-#ifdef WITNESS
-	vm_offset_t mapped;
-	int witness_size;
 #endif
 #if defined(__i386__) && defined(VM_PHYSSEG_DENSE)
 	long ii;
@@ -576,12 +657,11 @@ vm_page_startup(vm_offset_t vaddr)
 #ifdef VM_FREEPOOL_LAZYINIT
 	int lazyinit;
 #endif
+	int i, segind;
 
 	vaddr = round_page(vaddr);
 
 	vm_phys_early_startup();
-	biggestone = vm_phys_avail_largest();
-	end = phys_avail[biggestone+1];
 
 	/*
 	 * Initialize the page and queue locks.
@@ -591,16 +671,6 @@ vm_page_startup(vm_offset_t vaddr)
 		mtx_init(&pa_lock[i], "vm page", NULL, MTX_DEF);
 	for (i = 0; i < vm_ndomains; i++)
 		vm_page_domain_init(i);
-
-	new_end = end;
-#ifdef WITNESS
-	witness_size = round_page(witness_startup_count());
-	new_end -= witness_size;
-	mapped = pmap_map(&vaddr, new_end, new_end + witness_size,
-	    VM_PROT_READ | VM_PROT_WRITE);
-	bzero((void *)mapped, witness_size);
-	witness_startup((void *)mapped);
-#endif
 
 #if MINIDUMP_PAGE_TRACKING
 	/*
@@ -614,32 +684,50 @@ vm_page_startup(vm_offset_t vaddr)
 	 * minidump code.  In theory, they are not needed on i386, but are
 	 * included should the sf_buf code decide to use them.
 	 */
-	last_pa = 0;
 	vm_page_dump_pages = 0;
-	for (i = 0; dump_avail[i + 1] != 0; i += 2) {
+	for (i = 0; dump_avail[i + 1] != 0; i += 2)
 		vm_page_dump_pages += howmany(dump_avail[i + 1], PAGE_SIZE) -
 		    dump_avail[i] / PAGE_SIZE;
-		if (dump_avail[i + 1] > last_pa)
-			last_pa = dump_avail[i + 1];
-	}
 	vm_page_dump_size = round_page(BITSET_SIZE(vm_page_dump_pages));
-	new_end -= vm_page_dump_size;
-	vm_page_dump = (void *)(uintptr_t)pmap_map(&vaddr, new_end,
-	    new_end + vm_page_dump_size, VM_PROT_READ | VM_PROT_WRITE);
+	pa = vm_phys_early_alloc(vm_page_dump_size);
+	end_pa = pa + vm_page_dump_size;
+	vm_page_dump = (void *)(uintptr_t)pmap_map(&vaddr, pa, end_pa,
+	    VM_PROT_READ | VM_PROT_WRITE);
 	bzero((void *)vm_page_dump, vm_page_dump_size);
 #if MINIDUMP_STARTUP_PAGE_TRACKING
 	/*
-	 * Include the UMA bootstrap pages, witness pages and vm_page_dump
-	 * in a crash dump.  When pmap_map() uses the direct map, they are
-	 * not automatically included.
+	 * Include the vm_page_dump in a crash dump.  When pmap_map() uses the
+	 * direct map, they are not automatically included.
 	 */
-	for (pa = new_end; pa < end; pa += PAGE_SIZE)
+	for (; pa < end_pa; pa += PAGE_SIZE)
 		dump_add_page(pa);
 #endif
-#else
-	(void)last_pa;
 #endif
-	phys_avail[biggestone + 1] = new_end;
+
+#ifdef WITNESS
+	{
+		vm_offset_t witness_start;
+		int witness_size;
+
+		witness_size = round_page(witness_startup_count());
+		pa = vm_phys_early_alloc(witness_size);
+		end_pa = pa + witness_size;
+		witness_start = pmap_map(&vaddr, pa, end_pa,
+		    VM_PROT_READ | VM_PROT_WRITE);
+		bzero((void *)witness_start, witness_size);
+		witness_startup((void *)witness_start);
+
+#if MINIDUMP_PAGE_TRACKING && MINIDUMP_STARTUP_PAGE_TRACKING
+		/*
+		 * Include the witness pages in a crash dump.  When pmap_map()
+		 * uses the direct map, they are not automatically included.
+		 */
+		for (; pa < end_pa; pa += PAGE_SIZE)
+			dump_add_page(pa);
+#endif
+	}
+#endif
+
 #ifdef __amd64__
 	/*
 	 * Request that the physical pages underlying the message buffer be
@@ -647,11 +735,9 @@ vm_page_startup(vm_offset_t vaddr)
 	 * through the direct map, they are not automatically included.
 	 */
 	pa = DMAP_TO_PHYS((vm_offset_t)msgbufp->msg_ptr);
-	last_pa = pa + round_page(msgbufsize);
-	while (pa < last_pa) {
+	end_pa = pa + round_page(msgbufsize);
+	for (; pa < end_pa; pa += PAGE_SIZE)
 		dump_add_page(pa);
-		pa += PAGE_SIZE;
-	}
 #else
 	(void)pa;
 #endif
@@ -663,13 +749,13 @@ vm_page_startup(vm_offset_t vaddr)
 	 * has at least one element.
 	 */
 #ifdef VM_PHYSSEG_SPARSE
-	size = phys_avail[1] - phys_avail[0];
+	phys_size = phys_avail[1] - phys_avail[0];
 #endif
 	low_avail = phys_avail[0];
 	high_avail = phys_avail[1];
 	for (i = 2; phys_avail[i + 1] != 0; i += 2) {
 #ifdef VM_PHYSSEG_SPARSE
-		size += phys_avail[i + 1] - phys_avail[i];
+		phys_size += phys_avail[i + 1] - phys_avail[i];
 #endif
 		if (phys_avail[i] < low_avail)
 			low_avail = phys_avail[i];
@@ -678,7 +764,7 @@ vm_page_startup(vm_offset_t vaddr)
 	}
 	for (i = 0; i < vm_phys_nsegs; i++) {
 #ifdef VM_PHYSSEG_SPARSE
-		size += vm_phys_segs[i].end - vm_phys_segs[i].start;
+		phys_size += vm_phys_segs[i].end - vm_phys_segs[i].start;
 #endif
 		if (vm_phys_segs[i].start < low_avail)
 			low_avail = vm_phys_segs[i].start;
@@ -687,62 +773,18 @@ vm_page_startup(vm_offset_t vaddr)
 	}
 	first_page = low_avail / PAGE_SIZE;
 #ifdef VM_PHYSSEG_DENSE
-	size = high_avail - low_avail;
+	phys_size = high_avail - low_avail;
 #endif
 
-#ifdef PMAP_HAS_PAGE_ARRAY
-	pmap_page_array_startup(size / PAGE_SIZE);
-	biggestone = vm_phys_avail_largest();
-	end = new_end = phys_avail[biggestone + 1];
-#else
-#ifdef VM_PHYSSEG_DENSE
-	/*
-	 * In the VM_PHYSSEG_DENSE case, the number of pages can account for
-	 * the overhead of a page structure per page only if vm_page_array is
-	 * allocated from the last physical memory chunk.  Otherwise, we must
-	 * allocate page structures representing the physical memory
-	 * underlying vm_page_array, even though they will not be used.
-	 */
-	if (new_end != high_avail)
-		page_range = size / PAGE_SIZE;
-	else
-#endif
-	{
-		page_range = size / (PAGE_SIZE + sizeof(struct vm_page));
-
-		/*
-		 * If the partial bytes remaining are large enough for
-		 * a page (PAGE_SIZE) without a corresponding
-		 * 'struct vm_page', then new_end will contain an
-		 * extra page after subtracting the length of the VM
-		 * page array.  Compensate by subtracting an extra
-		 * page from new_end.
-		 */
-		if (size % (PAGE_SIZE + sizeof(struct vm_page)) >= PAGE_SIZE) {
-			if (new_end == high_avail)
-				high_avail -= PAGE_SIZE;
-			new_end -= PAGE_SIZE;
-		}
-	}
-	end = new_end;
-	new_end = vm_page_array_alloc(&vaddr, end, page_range);
-#endif
+	vm_page_array_alloc(&vaddr, phys_size);
 
 #if VM_NRESERVLEVEL > 0
 	/*
 	 * Allocate physical memory for the reservation management system's
 	 * data structures, and map it.
 	 */
-	new_end = vm_reserv_startup(&vaddr, new_end);
+	vm_reserv_startup(&vaddr);
 #endif
-#if MINIDUMP_PAGE_TRACKING && MINIDUMP_STARTUP_PAGE_TRACKING
-	/*
-	 * Include vm_page_array and vm_reserv_array in a crash dump.
-	 */
-	for (pa = new_end; pa < end; pa += PAGE_SIZE)
-		dump_add_page(pa);
-#endif
-	phys_avail[biggestone + 1] = new_end;
 
 	/*
 	 * Add physical memory segments corresponding to the available
@@ -785,20 +827,20 @@ vm_page_startup(vm_offset_t vaddr)
 		 * might be freed to the allocator at some future point, e.g.,
 		 * by kmem_bootstrap_free().
 		 */
-		startp = seg->start;
+		start_pa = seg->start;
 		for (i = 0; phys_avail[i + 1] != 0; i += 2) {
-			if (startp >= seg->end)
+			if (start_pa >= seg->end)
 				break;
-			if (phys_avail[i + 1] < startp)
+			if (phys_avail[i + 1] < start_pa)
 				continue;
-			if (phys_avail[i] <= startp) {
-				startp = phys_avail[i + 1];
+			if (phys_avail[i] <= start_pa) {
+				start_pa = phys_avail[i + 1];
 				continue;
 			}
-			m = vm_phys_seg_paddr_to_vm_page(seg, startp);
-			for (endp = MIN(phys_avail[i], seg->end);
-			    startp < endp; startp += PAGE_SIZE, m++) {
-				vm_page_init_page(m, startp, segind,
+			m = vm_phys_seg_paddr_to_vm_page(seg, start_pa);
+			for (end_pa = MIN(phys_avail[i], seg->end);
+			    start_pa < end_pa; start_pa += PAGE_SIZE, m++) {
+				vm_page_init_page(m, start_pa, segind,
 				    VM_FREEPOOL_DEFAULT);
 			}
 		}
@@ -812,9 +854,9 @@ vm_page_startup(vm_offset_t vaddr)
 			    seg->start >= phys_avail[i + 1])
 				continue;
 
-			startp = MAX(seg->start, phys_avail[i]);
-			endp = MIN(seg->end, phys_avail[i + 1]);
-			pagecount = (u_long)atop(endp - startp);
+			start_pa = MAX(seg->start, phys_avail[i]);
+			end_pa = MIN(seg->end, phys_avail[i + 1]);
+			pagecount = (u_long)atop(end_pa - start_pa);
 			if (pagecount == 0)
 				continue;
 
@@ -831,12 +873,12 @@ vm_page_startup(vm_offset_t vaddr)
 			 * to boot as quickly as possible) and/or systems with
 			 * large amounts of physical memory.
 			 */
-			m = vm_phys_seg_paddr_to_vm_page(seg, startp);
-			vm_page_init_page(m, startp, segind, pool);
+			m = vm_phys_seg_paddr_to_vm_page(seg, start_pa);
+			vm_page_init_page(m, start_pa, segind, pool);
 			if (pool == VM_FREEPOOL_DEFAULT) {
 				for (u_long j = 1; j < pagecount; j++) {
 					vm_page_init_page(&m[j],
-					    startp + ptoa((vm_paddr_t)j),
+					    start_pa + ptoa((vm_paddr_t)j),
 					    segind, pool);
 				}
 			}

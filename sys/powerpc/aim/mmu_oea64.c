@@ -3439,16 +3439,7 @@ moea64_page_array_startup(long pages)
 
 	vm_page_base = 0xd000000000000000ULL;
 
-	/* Short-circuit single-domain systems. */
-	if (vm_ndomains == 1) {
-		size = round_page(pages * sizeof(struct vm_page));
-		pa = vm_phys_early_alloc(size);
-		vm_page_base = moea64_map(&vm_page_base,
-		    pa, pa + size, VM_PROT_READ | VM_PROT_WRITE);
-		vm_page_array_size = pages;
-		vm_page_array = (vm_page_t)vm_page_base;
-		return;
-	}
+	MPASS(vm_ndomains > 1);
 
 	for (i = 0; i < MAXMEMDOM; i++)
 		dom_pages[i] = 0;
