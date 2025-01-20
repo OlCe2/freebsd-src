@@ -2407,7 +2407,8 @@ vm_phys_early_alloc_ex_err(size_t alloc_size, vm_paddr_t alignment,
 vm_paddr_t
 vm_phys_early_alloc(size_t alloc_size)
 {
-	return (vm_phys_early_alloc_ex(alloc_size, PAGE_SIZE, -1, -1, 0));
+	return (vm_phys_early_alloc_ex(alloc_size, PAGE_SIZE, -1, -1,
+	    VM_PHYS_EAF_ADDR_BOUNDARIES_FIRST));
 }
 
 void
