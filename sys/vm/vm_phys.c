@@ -2437,6 +2437,12 @@ vm_phys_early_startup(void)
 		int idx;
 
 		for (i = 0; mem_affinity[i].end != 0; i++) {
+			if (bootverbose)
+				printf("mem_affinity[%d]: [%#jx, %#jx), "
+				    "domain: %d.\n",
+				    i, (uintmax_t)mem_affinity[i].start,
+				    (uintmax_t)mem_affinity[i].end,
+				    mem_affinity[i].domain);
 			idx = vm_phys_avail_find(mem_affinity[i].start);
 			if (idx != -1)
 				vm_phys_avail_split(mem_affinity[i].start, idx);
@@ -2446,6 +2452,18 @@ vm_phys_early_startup(void)
 		}
 	}
 #endif
+	if (bootverbose) {
+		vm_paddr_t phys_size = 0;
+
+		printf("%s:\n", __func__);
+		for (i = 0; phys_avail[i + 1] != 0; i += 2) {
+			printf("phys_avail[] chunk %d: [%#jx, %#jx).\n", i / 2,
+			    (uintmax_t)phys_avail[i],
+			    (uintmax_t)phys_avail[i + 1]);
+			phys_size += phys_avail[i + 1] - phys_avail[i];
+		}
+		printf("phys_size = %#jx.\n", (uintmax_t)phys_size);
+	}
 }
 
 #ifdef DDB
