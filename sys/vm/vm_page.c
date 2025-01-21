@@ -788,10 +788,24 @@ vm_page_startup(vm_offset_t vaddr)
 
 	/*
 	 * Add physical memory segments corresponding to the available
-	 * physical pages.
+	 * physical pages.  On verbose boot, print the segments and the total
+	 * size of their pages.
 	 */
-	for (i = 0; phys_avail[i + 1] != 0; i += 2)
+	if (bootverbose) {
+		printf("%s: Before vm_phys_init():\n", __func__);
+		phys_size = 0;
+	}
+	for (i = 0; phys_avail[i + 1] != 0; i += 2) {
+		if (bootverbose) {
+			phys_size += phys_avail[i + 1] - phys_avail[i];
+			printf("phys_avail[] chunk %d: [%#jx, %#jx).\n",
+			    i / 2, (uintmax_t)phys_avail[i],
+			    (uintmax_t)phys_avail[i + 1]);
+		}
 		vm_phys_add_seg(phys_avail[i], phys_avail[i + 1]);
+	}
+	if (bootverbose)
+		printf("phys_size = %#jx.\n", (uintmax_t)phys_size);
 
 	/*
 	 * Initialize the physical memory allocator.
