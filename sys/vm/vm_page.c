@@ -537,7 +537,7 @@ vm_page_array_alloc(vm_offset_t *vaddr, vm_paddr_t phys_size)
 		vm_page_array_size = phys_size / PAGE_SIZE;
 		byte_size = vm_page_array_size * sizeof(struct vm_page);
 		pmap_page_array_startup(vm_page_array_size);
-		return;
+		goto out;
 	}
 #endif
 
@@ -627,6 +627,15 @@ vm_page_array_allocated:
 
 	vm_page_array = (vm_page_t)pmap_map(vaddr, pa, pa + byte_size,
 	    VM_PROT_READ | VM_PROT_WRITE);
+
+#ifdef PMAP_HAS_PAGE_ARRAY
+out:
+#endif
+	if (bootverbose) {
+		printf("%s:\n", __func__);
+		printf("vm_page_array = %p, size (bytes) = %#jx.\n",
+		    vm_page_array, (uintmax_t)byte_size);
+	}
 }
 
 /*
