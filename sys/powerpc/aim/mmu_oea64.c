@@ -3442,7 +3442,7 @@ moea64_page_array_startup(long pages)
 	/* Short-circuit single-domain systems. */
 	if (vm_ndomains == 1) {
 		size = round_page(pages * sizeof(struct vm_page));
-		pa = vm_phys_early_alloc(size, 0);
+		pa = vm_phys_early_alloc(size);
 		vm_page_base = moea64_map(&vm_page_base,
 		    pa, pa + size, VM_PROT_READ | VM_PROT_WRITE);
 		vm_page_array_size = pages;

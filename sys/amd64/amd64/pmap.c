@@ -5026,13 +5026,13 @@ pmap_kmsan_shadow_map_page_array(vm_paddr_t pdppa, vm_size_t size)
 	npdpg = howmany(size, NBPDP);
 	npde = size / NBPDR;
 
-	dummypa = vm_phys_early_alloc(PAGE_SIZE, -1);
+	dummypa = vm_phys_early_alloc(PAGE_SIZE);
 	pagezero((void *)PHYS_TO_DMAP(dummypa));
 
-	dummypt = vm_phys_early_alloc(PAGE_SIZE, -1);
+	dummypt = vm_phys_early_alloc(PAGE_SIZE);
 	pagezero((void *)PHYS_TO_DMAP(dummypt));
 
-	dummypd = vm_phys_early_alloc(PAGE_SIZE * npdpg, -1);
+	dummypd = vm_phys_early_alloc(PAGE_SIZE * npdpg);
 	for (i = 0; i < npdpg; i++)
 		pagezero((void *)PHYS_TO_DMAP(dummypd + ptoa(i)));
 
@@ -5091,7 +5091,8 @@ pmap_page_array_startup(long pages)
 		domain = vm_phys_domain(ptoa(pfn));
 		pdpe = pmap_pdpe(kernel_pmap, va);
 		if ((*pdpe & X86_PG_V) == 0) {
-			pa = vm_phys_early_alloc(PAGE_SIZE, domain);
+			pa = vm_phys_early_alloc_ex(PAGE_SIZE, PAGE_SIZE, -1,
+			    domain, 0);
 			dump_add_page(pa);
 			pagezero((void *)PHYS_TO_DMAP(pa));
 			*pdpe = (pdp_entry_t)(pa | X86_PG_V | X86_PG_RW |

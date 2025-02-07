@@ -6438,7 +6438,7 @@ mmu_radix_page_array_startup(long pages)
 	start = VM_MIN_KERNEL_ADDRESS;
 	end = start + pages * sizeof(struct vm_page);
 
-	pa = vm_phys_early_alloc(end - start, -1);
+	pa = vm_phys_early_alloc(end - start);
 
 	start = mmu_radix_map(&start, pa, end - start, VM_MEMATTR_DEFAULT);
 #ifdef notyet
@@ -6448,7 +6448,8 @@ mmu_radix_page_array_startup(long pages)
 		domain = vm_phys_domain(ptoa(pfn));
 		l2e = pmap_pml2e(kernel_pmap, va);
 		if ((be64toh(*l2e) & PG_V) == 0) {
-			pa = vm_phys_early_alloc(PAGE_SIZE, domain);
+			pa = vm_phys_early_alloc_ex(PAGE_SIZE, PAGE_SIZE, -1,
+			    domain, 0);
 			dump_add_page(pa);
 			pagezero(PHYS_TO_DMAP(pa));
 			pde_store(l2e, (pml2_entry_t)pa);

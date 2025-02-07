@@ -92,7 +92,7 @@ vm_paddr_t vm_phys_early_alloc_ex(size_t alloc_size, vm_paddr_t alignment,
 int __result_use_check vm_phys_early_alloc_ex_err(size_t alloc_size,
     vm_paddr_t alignment, int chunk_start_idx, int domain, u_int flags,
     vm_paddr_t *ppa);
-vm_paddr_t vm_phys_early_alloc(size_t alloc_size, int domain);
+vm_paddr_t vm_phys_early_alloc(size_t alloc_size);
 
 void vm_phys_early_startup(void);
 int vm_phys_avail_largest(void);
