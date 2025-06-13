@@ -45,6 +45,90 @@ SYSCTL_INT(_security_mac_do, OID_AUTO, print_parse_error, CTLFLAG_RWTUN,
     &print_parse_error, 0, "Print parse errors on setting rules "
     "(via sysctl(8)).");
 
+#define EXEC_PATHS_MAXLEN 1024
+static char exec_paths[EXEC_PATHS_MAXLEN] = "/usr/bin/mdo";
+
+#define MAX_EXEC_PATHS 16
+#define MAX_EXEC_PATH_LEN 256
+static char parsed_exec_paths[MAX_EXEC_PATHS][MAX_EXEC_PATH_LEN];
+static int exec_path_count = 0;
+static struct mtx exec_paths_mtx;
+
+static void
+mac_do_parse_exec_paths(const char *paths_str)
+{
+	int count = 0;
+	const char *start = paths_str;
+	const char *end;
+
+	mtx_lock(&exec_paths_mtx);
+	bzero(parsed_exec_paths, sizeof(parsed_exec_paths));
+	exec_path_count = 0;
+
+
+	while (*start != '\0' && count < MAX_EXEC_PATHS) {
+		while (*start == ':' && *start != '\0') start++;
+
+		end = start;
+		while (*end != ':' && *end != '\0') end++;
+
+		size_t len = end - start;
+		if (len > 0 && len < MAX_EXEC_PATH_LEN) {
+			bcopy(start, parsed_exec_paths[count], len);
+			parsed_exec_paths[count][len] = '\0';
+			count++;
+		}
+
+		start = end;
+	}
+
+	exec_path_count = count;
+	mtx_unlock(&exec_paths_mtx);
+}
+
+static int
+sysctl_exec_paths_handler(SYSCTL_HANDLER_ARGS)
+{
+	int error;
+	char buf[EXEC_PATHS_MAXLEN];
+
+	strlcpy(buf, exec_paths, sizeof(buf));
+
+	error = sysctl_handle_string(oidp, buf, sizeof(buf), req);
+	if (error || req->newptr == NULL) return error;
+
+	const char *start = buf;
+	const char *end;
+	int count = 0;
+
+	while (*start != '\0') {
+		while (*start == ':' && *start != '\0') start++;
+
+		end = start;
+		while (*end != ':' && *end != '\0') end++;
+
+		size_t len = end - start;
+		if (len == 0) continue;
+
+		if (*start != '/') return EINVAL;
+
+		if (len >= MAX_EXEC_PATH_LEN) return EINVAL;
+
+		count++;
+		if (count > MAX_EXEC_PATHS) return EINVAL;
+
+		start = end;
+	}
+
+	strlcpy(exec_paths, buf, sizeof(exec_paths));
+	mac_do_parse_exec_paths(exec_paths);
+
+	return 0;
+}
+
+
+SYSCTL_PROC(_security_mac_do, OID_AUTO, exec_paths, CTLTYPE_STRING | CTLFLAG_RW, 0, 0, sysctl_exec_paths_handler, "A", "Colon-separated list of allowed executables");
+
 static MALLOC_DEFINE(M_DO, "do_rule", "Rules for mac_do");
 
 #define MAC_RULE_STRING_LEN	1024
@@ -1986,8 +2070,15 @@ mac_do_priv_grant(struct ucred *cred, int priv)
 static int
 check_proc(void)
 {
-	char *path, *to_free;
-	int error;
+	char *path, *to_free, *token, *str;
+	int error = EPERM;
+
+	mtx_lock(&exec_paths_mtx);
+
+	if (is_null_or_empty(exec_paths)) {
+		mtx_unlock(&exec_paths_mtx);
+		return EPERM;
+	}
 
 	/*
 	 * Only grant privileges if requested by the right executable.
@@ -2003,10 +2094,26 @@ check_proc(void)
 	 * setting a MAC label per file (perhaps via additions to mtree(1)).  So
 	 * this probably isn't going to happen overnight, if ever.
 	 */
-	if (vn_fullpath(curproc->p_textvp, &path, &to_free) != 0)
+
+	if (vn_fullpath(curproc->p_textvp, &path, &to_free) != 0) {
+		mtx_unlock(&exec_paths_mtx);
 		return (EPERM);
-	error = strcmp(path, "/usr/bin/mdo") == 0 ? 0 : EPERM;
+	}
+
+	str = strdup(exec_paths, M_TEMP);
+	token = strsep(&str, ":");
+
+	while (token != NULL) {
+		if (strcmp(token, path) == 0) {
+			error = 0;
+			break;
+		}
+		token = strsep(&str, ":");
+	}
+
 	free(to_free, M_TEMP);
+	free(str, M_TEMP);
+	mtx_unlock(&exec_paths_mtx);
 	return (error);
 }
 
@@ -2094,6 +2201,7 @@ mac_do_setcred_exit(void)
 static void
 mac_do_init(struct mac_policy_conf *mpc)
 {
+	mtx_init(&exec_paths_mtx, "exec_paths_mtx", NULL, MTX_DEF);
 	struct prison *pr;
 
 	osd_jail_slot = osd_jail_register(dealloc_jail_osd, osd_methods);
@@ -2109,6 +2217,7 @@ mac_do_init(struct mac_policy_conf *mpc)
 static void
 mac_do_destroy(struct mac_policy_conf *mpc)
 {
+	mtx_destroy(&exec_paths_mtx);
 	/*
 	 * osd_thread_deregister() must be called before osd_jail_deregister(),
 	 * for the reason explained in dealloc_jail_osd().
