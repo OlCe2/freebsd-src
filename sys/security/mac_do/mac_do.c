@@ -2070,16 +2070,6 @@ mac_do_priv_grant(struct ucred *cred, int priv)
 static int
 check_proc(void)
 {
-	char *path, *to_free, *token, *str;
-	int error = EPERM;
-
-	mtx_lock(&exec_paths_mtx);
-
-	if (is_null_or_empty(exec_paths)) {
-		mtx_unlock(&exec_paths_mtx);
-		return EPERM;
-	}
-
 	/*
 	 * Only grant privileges if requested by the right executable.
 	 *
@@ -2095,25 +2085,28 @@ check_proc(void)
 	 * this probably isn't going to happen overnight, if ever.
 	 */
 
-	if (vn_fullpath(curproc->p_textvp, &path, &to_free) != 0) {
-		mtx_unlock(&exec_paths_mtx);
-		return (EPERM);
-	}
+	char *path, *to_free;
+	int error = EPERM;
+	char local_exec_paths[EXEC_PATHS_MAXLEN];
 
-	str = strdup(exec_paths, M_TEMP);
-	token = strsep(&str, ":");
+	mtx_lock(&exec_paths_mtx);
+	strlcpy(local_exec_paths, exec_paths, sizeof(local_exec_paths));
+	mtx_unlock(&exec_paths_mtx);
 
-	while (token != NULL) {
+	if (is_null_or_empty(local_exec_paths)) return EPERM;
+
+	if (vn_fullpath(curproc->p_textvp, &path, &to_free) != 0) return EPERM;
+
+	char *token, *str = local_exec_paths;
+
+	while ((token = strsep(&str, ":")) != NULL) {
 		if (strcmp(token, path) == 0) {
 			error = 0;
 			break;
 		}
-		token = strsep(&str, ":");
 	}
 
 	free(to_free, M_TEMP);
-	free(str, M_TEMP);
-	mtx_unlock(&exec_paths_mtx);
 	return (error);
 }
 
