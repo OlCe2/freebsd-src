@@ -1317,7 +1317,7 @@ SYSCTL_JAIL_PARAM_STRING(_mac_do, rules, CTLFLAG_RW, MAC_RULE_STRING_LEN,
     "Jail MAC/do rules");
 
 static void
-dealloc_exec_paths_osd(void *const value)
+dealloc_conf_osd(void *const value)
 {
 	struct mac_do_conf *conf = value;
 
@@ -1331,7 +1331,7 @@ dealloc_exec_paths_osd(void *const value)
 }
 
 static struct mac_do_conf *
-alloc_exec_paths(void)
+alloc_conf(void)
 {
 	struct mac_do_conf *const conf = malloc(sizeof(*conf), M_PATH, M_WAITOK | M_ZERO);
 	
@@ -1344,7 +1344,7 @@ alloc_exec_paths(void)
 }
 
 static struct mac_do_conf *
-find_exec_paths(struct prison *pr, struct prison **holder)
+find_conf(struct prison *pr, struct prison **holder)
 {
 	struct mac_do_conf *conf;
 
@@ -1367,7 +1367,7 @@ find_exec_paths(struct prison *pr, struct prison **holder)
 }
 
 static struct mac_do_conf *
-find_exec_paths_locked(struct prison *pr)
+find_conf_locked(struct prison *pr)
 {
 	struct prison *cpr = pr;
 	struct mac_do_conf *conf;
@@ -1382,13 +1382,13 @@ find_exec_paths_locked(struct prison *pr)
 }
 
 static void
-hold_exec_paths(struct mac_do_conf *conf)
+hold_conf(struct mac_do_conf *conf)
 {
 	refcount_acquire(&conf->use_count);
 }
 
 static void
-drop_exec_paths(struct mac_do_conf *conf)
+drop_conf(struct mac_do_conf *conf)
 {
 	if (refcount_release(&conf->use_count)) {
 		if (conf->exec_paths_str != NULL)
@@ -1398,7 +1398,7 @@ drop_exec_paths(struct mac_do_conf *conf)
 }
 
 static void
-remove_exec_paths(struct prison *const pr)
+remove_conf(struct prison *const pr)
 {
 	struct mac_do_conf *old_conf;
 	int error __unused;
@@ -1413,28 +1413,28 @@ remove_exec_paths(struct prison *const pr)
 	prison_unlock(pr);
 
 	if (old_conf != NULL)
-		drop_exec_paths(old_conf);
+		drop_conf(old_conf);
 }
 
 static void
-set_exec_paths(struct prison *const pr, struct mac_do_conf *const conf)
+set_conf(struct prison *const pr, struct mac_do_conf *const conf)
 {
 	struct mac_do_conf *old_conf;
-	hold_exec_paths(conf);
+	hold_conf(conf);
 
 	prison_lock(pr);
 	old_conf = osd_jail_get(pr, conf_osd_jail_slot);
 	osd_jail_set(pr, conf_osd_jail_slot, conf);
 	prison_unlock(pr);
-	if (old_conf != NULL) drop_exec_paths(old_conf);
+	if (old_conf != NULL) drop_conf(old_conf);
 }
 
 static void
-set_empty_exec_paths(struct prison *const pr)
+set_empty_conf(struct prison *const pr)
 {
-	struct mac_do_conf *const conf = alloc_exec_paths();
+	struct mac_do_conf *const conf = alloc_conf();
 
-	set_exec_paths(pr, conf);
+	set_conf(pr, conf);
 }
 
 static void
@@ -1472,7 +1472,7 @@ mac_do_sysctl_exec_paths(SYSCTL_HANDLER_ARGS)
 	int error;
 
 	pr = req->td->td_ucred->cr_prison;
-	conf = find_exec_paths(td_pr, &pr);
+	conf = find_conf(td_pr, &pr);
 
 	if (conf != NULL && conf->exec_paths_str != NULL) 
 		buf = strdup(conf->exec_paths_str, M_PATH);
@@ -1533,7 +1533,7 @@ mac_do_jail_create(void *obj, void *data __unused)
 	struct prison *const pr = obj;
 
 	set_empty_rules(pr);
-	set_empty_exec_paths(pr);
+	set_empty_conf(pr);
 	return (0);
 }
 
@@ -1559,7 +1559,7 @@ mac_do_jail_get(void *obj, void *data)
 	if (error != 0 && error != ENOENT)
 		goto done;
 
-	conf = find_exec_paths_locked(pr);
+	conf = find_conf_locked(pr);
 	if (conf->exec_paths_str != NULL) {
 		error = vfs_setopts(opts, "mac.do.exec_paths", conf->exec_paths_str);
 		if (error != 0 && error != ENOENT)
@@ -1753,27 +1753,23 @@ mac_do_jail_set(void *obj, void *data)
 
 	exec_paths_str = vfs_getopts(opts, "mac.do.exec_paths", &error);
 	MPASS(error == 0 || error == ENOENT);
-	//conf = alloc_exec_paths();
 	if (exec_paths_str != NULL) {
 		conf = malloc(sizeof(*conf), M_PATH, M_WAITOK | M_ZERO);
 		conf->exec_paths_str = strdup(exec_paths_str, M_PATH);
 		memset(conf->exec_paths, 0, sizeof(conf->exec_paths));
 		conf->exec_path_count = 0;
-		/*if (conf->exec_paths_str != NULL)
-			free(conf->exec_paths_str, M_PATH);
-		conf->exec_paths_str = strdup(exec_paths_str, M_PATH);*/
 		parse_exec_paths_into_conf(conf, exec_paths_str);
-		set_exec_paths(pr, conf);
+		set_conf(pr, conf);
 	} else {
 		struct mac_do_conf *conf;
-		conf = alloc_exec_paths();
-		set_exec_paths(pr, conf);
+		conf = alloc_conf();
+		set_conf(pr, conf);
 	}
 
 	switch (jsys) {
 	case JAIL_SYS_INHERIT:
 		remove_rules(pr);
-		remove_exec_paths(pr);
+		remove_conf(pr);
 		error = 0;
 		break;
 	case JAIL_SYS_DISABLE:
@@ -2344,7 +2340,7 @@ check_proc(void)
 	struct mac_do_conf *conf;
 	struct prison *pr = curproc->p_ucred->cr_prison;
 	struct prison *holder;
-	conf = find_exec_paths(pr, &holder);
+	conf = find_conf(pr, &holder);
 	if (conf->exec_path_count > 0) {
 		for (int i = 0; i < conf-> exec_path_count; i++) {
 			if (strcmp(conf->exec_paths[i], path) == 0) {
@@ -2409,8 +2405,8 @@ mac_do_setcred_enter(void)
 	 */
 	rules = find_rules(curproc->p_ucred->cr_prison, &pr);
 	hold_rules(rules);
-	conf = find_exec_paths_locked(curproc->p_ucred->cr_prison);
-	hold_exec_paths(conf);
+	conf = find_conf_locked(curproc->p_ucred->cr_prison);
+	hold_conf(conf);
 	prison_unlock(pr);
 
 	/*
@@ -2470,7 +2466,7 @@ mac_do_init(struct mac_policy_conf *mpc)
 	struct prison *pr;
 
 	osd_jail_slot = osd_jail_register(dealloc_jail_osd, osd_methods);
-	conf_osd_jail_slot = osd_jail_register(dealloc_exec_paths_osd, NULL);
+	conf_osd_jail_slot = osd_jail_register(dealloc_conf_osd, NULL);
 	set_empty_rules(&prison0);
 	sx_slock(&allprison_lock);
 	TAILQ_FOREACH(pr, &allprison, pr_list)
