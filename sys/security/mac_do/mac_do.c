@@ -1697,6 +1697,17 @@ mac_do_jail_check(void *obj, void *data)
 			}
 			start = end;
 		}
+
+		switch (jsys) {
+		case JAIL_SYS_DISABLE:
+		case JAIL_SYS_INHERIT:
+			if (exec_paths_str[0] != '\0') {
+				vfs_opterror(opts, "'mac.do.exec_paths' specified "
+				    "but should not given 'mac.do''s value");
+				return (EINVAL);
+			}
+			break;
+		}
 	}
 
 	return (error);
@@ -1767,7 +1778,6 @@ mac_do_jail_set(void *obj, void *data)
 	switch (jsys) {
 	case JAIL_SYS_INHERIT:
 		remove_rules(pr);
-		//remove_conf(pr);
 		error = 0;
 		break;
 	case JAIL_SYS_DISABLE:
