@@ -1373,7 +1373,7 @@ find_conf_locked(struct prison *pr)
 	struct mac_do_conf *conf;
 
 	for (;;) {
-		conf = osd_jail_get(pr, conf_osd_jail_slot);
+		conf = osd_jail_get(cpr, conf_osd_jail_slot);
 		if (conf != NULL) return conf;
 
 		if (cpr->pr_parent == NULL) return NULL;
@@ -1769,7 +1769,7 @@ mac_do_jail_set(void *obj, void *data)
 	switch (jsys) {
 	case JAIL_SYS_INHERIT:
 		remove_rules(pr);
-		remove_conf(pr);
+		//remove_conf(pr);
 		error = 0;
 		break;
 	case JAIL_SYS_DISABLE:
@@ -2379,7 +2379,7 @@ static void
 mac_do_setcred_enter(void)
 {
 	struct rules *rules;
-	struct mac_do_conf *conf;
+	//struct mac_do_conf *conf;
 	struct prison *pr;
 	struct mac_do_setcred_data * data;
 	int error;
@@ -2405,8 +2405,8 @@ mac_do_setcred_enter(void)
 	 */
 	rules = find_rules(curproc->p_ucred->cr_prison, &pr);
 	hold_rules(rules);
-	conf = find_conf_locked(curproc->p_ucred->cr_prison);
-	hold_conf(conf);
+	//conf = find_conf_locked(curproc->p_ucred->cr_prison);
+	//hold_conf(conf);
 	prison_unlock(pr);
 
 	/*
