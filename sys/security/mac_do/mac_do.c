@@ -1466,13 +1466,11 @@ static int
 mac_do_sysctl_exec_paths(SYSCTL_HANDLER_ARGS)
 {
 	char *buf;
-	struct prison *pr;
 	struct prison *td_pr = req->td->td_ucred->cr_prison;
 	struct mac_do_conf *conf;
 	int error;
 
-	pr = req->td->td_ucred->cr_prison;
-	conf = find_conf(td_pr, &pr);
+	conf = find_conf_locked(td_pr);
 
 	if (conf != NULL && conf->exec_paths_str != NULL) 
 		buf = strdup(conf->exec_paths_str, M_PATH);
