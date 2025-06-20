@@ -1769,7 +1769,7 @@ mac_do_jail_set(void *obj, void *data)
 		conf->exec_path_count = 0;
 		parse_exec_paths_into_conf(conf, exec_paths_str);
 		set_conf(pr, conf);
-	} else {
+	} else if (jsys == JAIL_SYS_NEW) {
 		struct mac_do_conf *conf;
 		conf = alloc_conf();
 		set_conf(pr, conf);
@@ -1778,6 +1778,7 @@ mac_do_jail_set(void *obj, void *data)
 	switch (jsys) {
 	case JAIL_SYS_INHERIT:
 		remove_rules(pr);
+		remove_conf(pr);
 		error = 0;
 		break;
 	case JAIL_SYS_DISABLE:
@@ -2387,7 +2388,7 @@ static void
 mac_do_setcred_enter(void)
 {
 	struct rules *rules;
-	//struct mac_do_conf *conf;
+	struct mac_do_conf *conf;
 	struct prison *pr;
 	struct mac_do_setcred_data * data;
 	int error;
@@ -2413,8 +2414,8 @@ mac_do_setcred_enter(void)
 	 */
 	rules = find_rules(curproc->p_ucred->cr_prison, &pr);
 	hold_rules(rules);
-	//conf = find_conf_locked(curproc->p_ucred->cr_prison);
-	//hold_conf(conf);
+	conf = find_conf_locked(curproc->p_ucred->cr_prison);
+	hold_conf(conf);
 	prison_unlock(pr);
 
 	/*
@@ -2476,9 +2477,12 @@ mac_do_init(struct mac_policy_conf *mpc)
 	osd_jail_slot = osd_jail_register(dealloc_jail_osd, osd_methods);
 	conf_osd_jail_slot = osd_jail_register(dealloc_conf_osd, NULL);
 	set_empty_rules(&prison0);
+	set_empty_conf(&prison0);
 	sx_slock(&allprison_lock);
-	TAILQ_FOREACH(pr, &allprison, pr_list)
+	TAILQ_FOREACH(pr, &allprison, pr_list) {
 	    set_empty_rules(pr);
+		set_empty_conf(pr);
+	}
 	sx_sunlock(&allprison_lock);
 
 	osd_thread_slot = osd_thread_register(dealloc_thread_osd);
@@ -2495,7 +2499,6 @@ mac_do_destroy(struct mac_policy_conf *mpc)
 	osd_thread_deregister(osd_thread_slot);
 	osd_jail_deregister(osd_jail_slot);
 
-	//if (conf_osd_jail_slot != -1) osd_jail_deregister(conf_osd_jail_slot);
 	osd_jail_deregister(conf_osd_jail_slot);
 }
 
