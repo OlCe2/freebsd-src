@@ -1192,13 +1192,26 @@ hold_conf(struct conf *const conf)
 	refcount_acquire(&conf->use_count);
 }
 
+/*static void
+drop_conf(struct conf *const conf)
+{
+	if (refcount_release(&conf->use_count)) {
+		toast_rules(conf->rules);
+		free(conf->exec_paths, M_MAC_DO);
+	}
+}*/
+
 static void
 drop_conf(struct conf *const conf)
 {
-	if (refcount_release(&conf->use_count))
-		toast_rules(conf->rules);
+	if (refcount_release(&conf->use_count)) {
+		if (conf->rules != NULL)
+			toast_rules(conf->rules);
+		if (conf->exec_paths != NULL)
+			free(conf->exec_paths, M_MAC_DO);
+		free(conf, M_MAC_DO);
+	}
 }
-
 #ifdef INVARIANTS
 static void
 check_conf_use_count(const struct conf *const conf, u_int expected)
@@ -1255,7 +1268,6 @@ dealloc_jail_osd(void *const value)
 	 */
 	check_conf_use_count(conf, 1);
 	free_conf(conf);
-	//toast_rules(conf->rules);
 }
 
 /*
@@ -1341,56 +1353,6 @@ clone_rules(const struct rules *src)
 	return (dst);
 }
 
-static void
-conf_copy_rules(struct conf *dst, struct conf *src)
-{
-	MPASS(dst != NULL && src != NULL && src->rules != NULL);
-	dst->rules = clone_rules(src->rules);
-}
-
-static int
-parse_and_set_exec_paths(struct prison *pr, const char *string,
-    struct parse_error **parse_error)
-{
-	struct exec_paths *xp = NULL;
-	struct conf *parent_conf = NULL, *new_conf = NULL;
-	struct prison *td_pr = curproc->p_ucred->cr_prison;
-	int error;
-
-	*parse_error = NULL;
-
-	error = parse_exec_paths(string, &xp, parse_error);
-	if (error != 0)
-		return (error);
-
-	struct conf *current_conf = osd_jail_get(pr, osd_jail_slot);
-
-	if (current_conf == NULL) {
-		/* Inherit from parent */
-		parent_conf = find_conf(td_pr, &pr);
-		if (parent_conf == NULL || parent_conf->rules == NULL) {
-			free(xp, M_MAC_DO);
-			make_parse_error(parse_error, 0,
-			    "Cannot set exec_paths because no rules are inherited");
-			return (EINVAL);
-		}
-
-		new_conf = alloc_conf();
-		conf_copy_rules(new_conf, parent_conf);  // deep clone of rules
-		new_conf->exec_paths = xp;
-
-		(void)osd_jail_set(pr, osd_jail_slot, new_conf);
-	} else {
-		/* Jail already has a conf — overwrite exec_paths only */
-		if (current_conf->exec_paths != NULL)
-			free(current_conf->exec_paths, M_MAC_DO);
-
-		current_conf->exec_paths = xp;
-	}
-
-	return (0);
-}
-
 static struct exec_paths *
 clone_exec_paths(const struct exec_paths *src)
 {
@@ -1401,40 +1363,97 @@ clone_exec_paths(const struct exec_paths *src)
 	return (dst);
 }
 
+static struct conf *
+promote_inherited_conf(struct prison *pr, bool with_rules, bool with_execs)
+{
+	struct prison *ppr;
+	struct conf *parent = find_conf(pr, &ppr);
+	prison_unlock(ppr);
+
+	if (parent == NULL)
+		return (NULL);
+
+	struct conf *new_conf = alloc_conf();
+
+	if (with_rules) {
+		if (parent->rules == NULL)
+			goto fail;
+		new_conf->rules = clone_rules(parent->rules);
+	}
+
+	if (with_execs) {
+		if (parent->exec_paths == NULL)
+			goto fail;
+		new_conf->exec_paths = clone_exec_paths(parent->exec_paths);
+	}
+
+	set_conf(pr, new_conf);
+	return new_conf;
+
+fail:
+	drop_conf(new_conf);
+	return NULL;
+}
+
+static int
+parse_and_set_exec_paths(struct prison *pr, const char *string,
+    struct parse_error **parse_error)
+{
+	struct exec_paths *exec_paths = NULL;
+	struct conf *conf = NULL;
+	int error;
+
+	*parse_error = NULL;
+
+	error = parse_exec_paths(string, &exec_paths, parse_error);
+	if (error != 0)
+		return (error);
+
+	conf = osd_jail_get(pr, osd_jail_slot);
+	if (conf == NULL) {
+		conf = promote_inherited_conf(pr, true, false);
+		if (conf == NULL) {
+			free(exec_paths, M_MAC_DO);
+			make_parse_error(parse_error, 0,
+			    "Cannot set exec_paths because no rules are inherited");
+			return (EINVAL);
+		}
+	}
+
+	if (conf->exec_paths != NULL)
+		free(conf->exec_paths, M_MAC_DO);
+
+	conf->exec_paths = exec_paths;
+	return (0);
+}
+
 static int
 parse_and_set_rules(struct prison *pr, const char *rules_string,
     struct parse_error **parse_error)
 {
 	struct rules *rules = NULL;
-	struct conf *current = NULL, *parent = NULL, *new_conf = NULL;
-	struct prison *td_pr = curproc->p_ucred->cr_prison;
+	struct conf *conf = NULL;
 	int error;
 
 	error = parse_rules(rules_string, &rules, parse_error);
 	if (error != 0)
 		return (error);
 
-	current = osd_jail_get(pr, osd_jail_slot);
-
-	if (current == NULL) {
-		parent = find_conf(td_pr, &pr);
-		if (parent == NULL || parent->exec_paths == NULL) {
+	conf = osd_jail_get(pr, osd_jail_slot);
+	if (conf == NULL) {
+		conf = promote_inherited_conf(pr, false, true);
+		if (conf == NULL) {
 			toast_rules(rules);
 			make_parse_error(parse_error, 0,
 			    "Cannot set rules: no inherited exec_paths available");
 			return (EINVAL);
 		}
-
-		new_conf = alloc_conf();
-		new_conf->rules = rules;
-		new_conf->exec_paths = clone_exec_paths(parent->exec_paths);
-		set_conf(pr, new_conf);
-	} else {
-		if (current->rules != NULL)
-			toast_rules(current->rules);
-		current->rules = rules;
 	}
 
+	if (conf->rules != NULL)
+		toast_rules(conf->rules);
+
+	conf->rules = rules;
 	return (0);
 }
 
@@ -1638,7 +1657,7 @@ mac_do_jail_check(void *obj, void *data)
 		if (has_rules)
 			jsys = JAIL_SYS_NEW;
 		else if (has_execs)
-			jsys = JAIL_SYS_DISABLE;  // invalid alone, handled later
+			jsys = JAIL_SYS_DISABLE;
 		else
 			jsys = JAIL_SYS_DISABLE;
 	}
@@ -1713,9 +1732,10 @@ mac_do_jail_set(void *obj, void *data)
 		remove_conf(pr);
 		return (0);
 
+	struct prison *p;
 	case JAIL_SYS_NEW:
-		parent_conf = find_conf(curproc->p_ucred->cr_prison, &pr);
-		prison_unlock(pr);
+		parent_conf = find_conf(curproc->p_ucred->cr_prison, &p);
+		prison_unlock(p);
 		new_conf = alloc_conf();
 
 		if (has_rules) {
@@ -1758,7 +1778,7 @@ fail:
 		free_parse_error(parse_error);
 	}
 	if (new_conf != NULL)
-		free_conf(new_conf);
+		drop_conf(new_conf);
 	return (error);
 }
 
