@@ -25,6 +25,7 @@
 #include <sys/refcount.h>
 #include <sys/socket.h>
 #include <sys/sx.h>
+#include <sys/systm.h>
 #include <sys/sysctl.h>
 #include <sys/ucred.h>
 #include <sys/vnode.h>
@@ -32,6 +33,13 @@
 #include <machine/stdarg.h>
 
 #include <security/mac/mac_policy.h>
+
+static int alloc_conf_count = 0;
+static int drop_conf_count = 0;
+static int alloc_rules_count = 0;
+static int drop_rules_count = 0;
+static int alloc_exec_paths_count = 0;
+static int drop_exec_paths_count = 0;
 
 static SYSCTL_NODE(_security_mac, OID_AUTO, do,
     CTLFLAG_RW|CTLFLAG_MPSAFE, 0, "mac_do policy controls");
@@ -338,6 +346,9 @@ toast_rules(struct rules *const rules)
 		free(rule, M_MAC_DO);
 	}
 	free(rules, M_MAC_DO);
+	drop_rules_count++;
+	void *caller = __builtin_return_address(0);
+	printf("[mac_do] toast_rules called from %p\n", caller);
 }
 
 static struct rules *
@@ -350,6 +361,9 @@ alloc_rules(void)
 	rules->string[0] = '\0';
 	STAILQ_INIT(&rules->head);
 
+	alloc_rules_count++;
+	void *caller = __builtin_return_address(0);
+	printf("[mac_do] alloc_rules called from %p\n", caller);
 	return (rules);
 }
 
@@ -362,6 +376,7 @@ alloc_exec_paths(void)
 	exec_paths = malloc(sizeof(*exec_paths), M_MAC_DO, M_WAITOK | M_ZERO);
 	exec_paths->exec_paths_str[0] = 0;
 
+	alloc_exec_paths_count++;
 	return (exec_paths);
 }
 
@@ -373,6 +388,8 @@ alloc_conf(void)
 	conf->rules = alloc_rules();
 	conf->exec_paths = alloc_exec_paths();
 	conf->use_count = 0;
+
+	alloc_conf_count++;
 
 	return (conf);
 }
@@ -1192,26 +1209,22 @@ hold_conf(struct conf *const conf)
 	refcount_acquire(&conf->use_count);
 }
 
-/*static void
-drop_conf(struct conf *const conf)
-{
-	if (refcount_release(&conf->use_count)) {
-		toast_rules(conf->rules);
-		free(conf->exec_paths, M_MAC_DO);
-	}
-}*/
-
 static void
 drop_conf(struct conf *const conf)
 {
 	if (refcount_release(&conf->use_count)) {
-		if (conf->rules != NULL)
+		if (conf->rules != NULL) {
 			toast_rules(conf->rules);
-		if (conf->exec_paths != NULL)
+		}
+		if (conf->exec_paths != NULL) {
+			drop_exec_paths_count++;
 			free(conf->exec_paths, M_MAC_DO);
+		}
+		drop_conf_count++;
 		free(conf, M_MAC_DO);
 	}
 }
+
 #ifdef INVARIANTS
 static void
 check_conf_use_count(const struct conf *const conf, u_int expected)
@@ -1225,21 +1238,6 @@ check_conf_use_count(const struct conf *const conf, u_int expected)
 #else
 #define check_conf_use_count(...)
 #endif /* INVARIANTS */
-
-static void
-free_conf(struct conf *conf)
-{
-	if (conf == NULL)
-		return;
-
-	if (conf->rules != NULL)
-		toast_rules(conf->rules);
-
-	if (conf->exec_paths != NULL)
-		free(conf->exec_paths, M_MAC_DO);
-
-	free(conf, M_MAC_DO);
-}
 
 /*
  * OSD destructor for slot 'osd_jail_slot'.
@@ -1267,7 +1265,7 @@ dealloc_jail_osd(void *const value)
 	 * to be able to check that only one reference remains.
 	 */
 	check_conf_use_count(conf, 1);
-	free_conf(conf);
+	drop_conf(conf);
 }
 
 /*
@@ -1406,8 +1404,13 @@ parse_and_set_exec_paths(struct prison *pr, const char *string,
 	*parse_error = NULL;
 
 	error = parse_exec_paths(string, &exec_paths, parse_error);
-	if (error != 0)
+	if (error != 0) {
+		if (exec_paths != NULL) {
+			free(exec_paths, M_MAC_DO);
+			drop_exec_paths_count++;
+		}
 		return (error);
+	}
 
 	conf = osd_jail_get(pr, osd_jail_slot);
 	if (conf == NULL) {
@@ -1420,8 +1423,10 @@ parse_and_set_exec_paths(struct prison *pr, const char *string,
 		}
 	}
 
-	if (conf->exec_paths != NULL)
+	if (conf->exec_paths != NULL) {
+		drop_exec_paths_count++;
 		free(conf->exec_paths, M_MAC_DO);
+	}
 
 	conf->exec_paths = exec_paths;
 	return (0);
@@ -1436,8 +1441,12 @@ parse_and_set_rules(struct prison *pr, const char *rules_string,
 	int error;
 
 	error = parse_rules(rules_string, &rules, parse_error);
-	if (error != 0)
+	if (error != 0) {
+		if (rules != NULL) {
+			toast_rules(rules);
+		}
 		return (error);
+	}
 
 	conf = osd_jail_get(pr, osd_jail_slot);
 	if (conf == NULL) {
@@ -2459,6 +2468,9 @@ mac_do_destroy(struct mac_policy_conf *mpc)
 	 */
 	osd_thread_deregister(osd_thread_slot);
 	osd_jail_deregister(osd_jail_slot);
+	printf("[mac_do] alloc_conf_count = %d, drop_conf_count = %d\n", alloc_conf_count, drop_conf_count);
+	printf("[mac_do] alloc_exec_paths_count = %d, drop_exec_paths_count = %d\n", alloc_exec_paths_count, drop_exec_paths_count);
+	printf("[mac_do] alloc_rules_count = %d, drop_rules_count = %d\n", alloc_rules_count, drop_rules_count);
 }
 
 static struct mac_policy_ops do_ops = {
