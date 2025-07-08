@@ -25,7 +25,6 @@
 #include <sys/refcount.h>
 #include <sys/socket.h>
 #include <sys/sx.h>
-#include <sys/systm.h>
 #include <sys/sysctl.h>
 #include <sys/ucred.h>
 #include <sys/vnode.h>
@@ -36,9 +35,9 @@
 
 static int alloc_conf_count = 0;
 static int drop_conf_count = 0;
-static int alloc_rules_count = 0;
+static int init_rules_count = 0;
 static int drop_rules_count = 0;
-static int alloc_exec_paths_count = 0;
+static int init_exec_paths_count = 0;
 static int drop_exec_paths_count = 0;
 
 static SYSCTL_NODE(_security_mac, OID_AUTO, do,
@@ -347,12 +346,12 @@ toast_rules(struct rules *const rules)
 	}
 	free(rules, M_MAC_DO);
 	drop_rules_count++;
-	void *caller = __builtin_return_address(0);
-	printf("[mac_do] toast_rules called from %p\n", caller);
+	//void *caller = __builtin_return_address(0);
+	//printf("[mac_do] toast_rules called from %p\n", caller);
 }
 
 static struct rules *
-alloc_rules(void)
+init_rules(void)
 {
 	struct rules *rules;
 
@@ -361,14 +360,14 @@ alloc_rules(void)
 	rules->string[0] = '\0';
 	STAILQ_INIT(&rules->head);
 
-	alloc_rules_count++;
-	void *caller = __builtin_return_address(0);
-	printf("[mac_do] alloc_rules called from %p\n", caller);
+	init_rules_count++;
+	//void *caller = __builtin_return_address(0);
+	//printf("[mac_do] init_rules called from %p\n", caller);
 	return (rules);
 }
 
 static struct exec_paths *
-alloc_exec_paths(void)
+init_exec_paths(void)
 {
 	struct exec_paths *exec_paths;
 
@@ -376,7 +375,7 @@ alloc_exec_paths(void)
 	exec_paths = malloc(sizeof(*exec_paths), M_MAC_DO, M_WAITOK | M_ZERO);
 	exec_paths->exec_paths_str[0] = 0;
 
-	alloc_exec_paths_count++;
+	init_exec_paths_count++;
 	return (exec_paths);
 }
 
@@ -385,8 +384,8 @@ alloc_conf(void)
 {
 	struct conf *const conf = malloc(sizeof(*conf), M_MAC_DO, M_WAITOK | M_ZERO);
 
-	conf->rules = alloc_rules();
-	conf->exec_paths = alloc_exec_paths();
+	conf->rules = init_rules();
+	conf->exec_paths = init_exec_paths();
 	conf->use_count = 0;
 
 	alloc_conf_count++;
@@ -1080,7 +1079,7 @@ parse_rules(const char *const string, struct rules **const rulesp,
 		return (ENAMETOOLONG);
 	}
 
-	rules = alloc_rules();
+	rules = init_rules();
 	bcopy(string, rules->string, len + 1);
 	MPASS(rules->string[len] == '\0'); /* Catch some races. */
 
@@ -1124,7 +1123,7 @@ parse_exec_paths(const char *const string, struct exec_paths **const exec_pathsp
 		return (ENAMETOOLONG);
 	}
 
-	exec_paths = alloc_exec_paths();
+	exec_paths = init_exec_paths();
 	bcopy(string, exec_paths->exec_paths_str, len + 1);
 	MPASS(exec_paths->exec_paths_str[len] == '\0');
 
@@ -1345,11 +1344,37 @@ static struct rules *
 clone_rules(const struct rules *src)
 {
 	struct rules *dst;
+	struct rule *src_rule, *dst_rule;
 
-	dst = malloc(sizeof(*dst), M_MAC_DO, M_WAITOK);
-	bcopy(src, dst, sizeof(*dst));
-	return (dst);
+	dst = malloc(sizeof(*dst), M_MAC_DO, M_WAITOK | M_ZERO);
+	strlcpy(dst->string, src->string, sizeof(dst->string));
+	STAILQ_INIT(&dst->head);
+
+	STAILQ_FOREACH(src_rule, &src->head, r_entries) {
+		dst_rule = malloc(sizeof(*dst_rule), M_MAC_DO, M_WAITOK | M_ZERO);
+		bcopy(src_rule, dst_rule, sizeof(*dst_rule));
+
+		if (src_rule->uids_nb > 0) {
+			dst_rule->uids = malloc(sizeof(*dst_rule->uids) * src_rule->uids_nb,
+			    M_MAC_DO, M_WAITOK);
+			bcopy(src_rule->uids, dst_rule->uids,
+			    sizeof(*dst_rule->uids) * src_rule->uids_nb);
+		}
+
+		if (src_rule->gids_nb > 0) {
+			dst_rule->gids = malloc(sizeof(*dst_rule->gids) * src_rule->gids_nb,
+			    M_MAC_DO, M_WAITOK);
+			bcopy(src_rule->gids, dst_rule->gids,
+			    sizeof(*dst_rule->gids) * src_rule->gids_nb);
+		}
+
+		STAILQ_INSERT_TAIL(&dst->head, dst_rule, r_entries);
+	}
+
+	return dst;
 }
+
+
 
 static struct exec_paths *
 clone_exec_paths(const struct exec_paths *src)
@@ -1362,7 +1387,7 @@ clone_exec_paths(const struct exec_paths *src)
 }
 
 static struct conf *
-promote_inherited_conf(struct prison *pr, bool with_rules, bool with_execs)
+parse_and_set_conf(struct prison *pr, bool rules, bool exec_paths)
 {
 	struct prison *ppr;
 	struct conf *parent = find_conf(pr, &ppr);
@@ -1373,24 +1398,20 @@ promote_inherited_conf(struct prison *pr, bool with_rules, bool with_execs)
 
 	struct conf *new_conf = alloc_conf();
 
-	if (with_rules) {
-		if (parent->rules == NULL)
-			goto fail;
+	if (rules) {
 		new_conf->rules = clone_rules(parent->rules);
 	}
 
-	if (with_execs) {
-		if (parent->exec_paths == NULL)
-			goto fail;
+	if (exec_paths) {
 		new_conf->exec_paths = clone_exec_paths(parent->exec_paths);
 	}
 
 	set_conf(pr, new_conf);
 	return new_conf;
 
-fail:
+/*fail:
 	drop_conf(new_conf);
-	return NULL;
+	return NULL;*/
 }
 
 static int
@@ -1414,7 +1435,7 @@ parse_and_set_exec_paths(struct prison *pr, const char *string,
 
 	conf = osd_jail_get(pr, osd_jail_slot);
 	if (conf == NULL) {
-		conf = promote_inherited_conf(pr, true, false);
+		conf = parse_and_set_conf(pr, true, false);
 		if (conf == NULL) {
 			free(exec_paths, M_MAC_DO);
 			make_parse_error(parse_error, 0,
@@ -1450,7 +1471,7 @@ parse_and_set_rules(struct prison *pr, const char *rules_string,
 
 	conf = osd_jail_get(pr, osd_jail_slot);
 	if (conf == NULL) {
-		conf = promote_inherited_conf(pr, false, true);
+		conf = parse_and_set_conf(pr, false, true);
 		if (conf == NULL) {
 			toast_rules(rules);
 			make_parse_error(parse_error, 0,
@@ -1610,7 +1631,8 @@ mac_do_jail_check(void *obj, void *data)
 {
 	struct vfsoptlist *opts = data;
 	char *rules_string, *exec_paths_string;
-	int error, jsys, rules_len = 0, execs_len = 0;
+	int error, jsys, rules_len = 0, exec_paths_len = 0;
+	bool has_rules, has_exec_paths;
 
 	/* Read mac.do = -1 if unset */
 	error = vfs_copyopt(opts, "mac.do", &jsys, sizeof(jsys));
@@ -1624,7 +1646,12 @@ mac_do_jail_check(void *obj, void *data)
 			return (EINVAL);
 	}
 
-	/* Handle rules input */
+	/*
+	 * We use vfs_getopt() here instead of vfs_getopts() to get the length.
+	 * We perform the additional checks done by the latter here, even if
+	 * jail_set() calls vfs_getopts() itself later (they becoming
+	 * inconsistent wouldn't cause any security problem).
+	 */
 	error = vfs_getopt(opts, "mac.do.rules", (void **)&rules_string, &rules_len);
 	if (error == ENOENT)
 		rules_string = NULL;
@@ -1642,31 +1669,33 @@ mac_do_jail_check(void *obj, void *data)
 	}
 
 	/* Handle exec_paths input */
-	error = vfs_getopt(opts, "mac.do.exec_paths", (void **)&exec_paths_string, &execs_len);
+	error = vfs_getopt(opts, "mac.do.exec_paths", (void **)&exec_paths_string, &exec_paths_len);
 	if (error == ENOENT)
 		exec_paths_string = NULL;
 	else {
 		if (error != 0)
 			return (error);
-		if (execs_len == 0 || exec_paths_string[execs_len - 1] != '\0') {
+		if (exec_paths_len == 0 || exec_paths_string[exec_paths_len - 1] != '\0') {
 			vfs_opterror(opts, "'mac.do.exec_paths' not a proper string");
 			return (EINVAL);
 		}
-		if (execs_len > EXEC_PATHS_MAXLEN) {
+		if (exec_paths_len > EXEC_PATHS_MAXLEN) {
 			vfs_opterror(opts, "'mac.do.exec_paths' too long");
 			return (ENAMETOOLONG);
 		}
 	}
 
-	const bool has_rules = rules_string && rules_string[0] != '\0';
-	const bool has_execs = exec_paths_string && exec_paths_string[0] != '\0';
+	/*
+	 * Be liberal, considering that an empty rule or exec paths specification is equivalent to no specification.
+	 * This affects the JAIL_SYS_DISABLE and JAIL_SYS_INHERIT sanity checks below.
+	 */
+	has_rules = rules_string && rules_string[0] != '\0';
+	has_exec_paths = exec_paths_string && exec_paths_string[0] != '\0';
 
 	/* Infer jsys if needed */
 	if (jsys == -1) {
 		if (has_rules)
 			jsys = JAIL_SYS_NEW;
-		else if (has_execs)
-			jsys = JAIL_SYS_DISABLE;
 		else
 			jsys = JAIL_SYS_DISABLE;
 	}
@@ -1679,14 +1708,14 @@ mac_do_jail_check(void *obj, void *data)
 			vfs_opterror(opts, "'mac.do.rules' specified but should not be when mac.do is disabled or inherited");
 			return (EINVAL);
 		}
-		if (has_execs) {
+		if (has_exec_paths) {
 			vfs_opterror(opts, "'mac.do.exec_paths' specified but should not be when mac.do is disabled or inherited");
 			return (EINVAL);
 		}
 		break;
 
 	case JAIL_SYS_NEW:
-		if (!has_rules && !has_execs) {
+		if (!has_rules && !has_exec_paths) {
 			vfs_opterror(opts, "mac.do set to 'new' but neither rules nor exec_paths specified");
 			return (EINVAL);
 		}
@@ -1703,12 +1732,18 @@ mac_do_jail_check(void *obj, void *data)
 static int
 mac_do_jail_set(void *obj, void *data)
 {
-	struct prison *pr = obj;
+	struct prison *pr = obj, *p;
 	struct vfsoptlist *opts = data;
 	char *rules_string, *exec_paths_string;
 	struct parse_error *parse_error = NULL;
 	struct conf *new_conf = NULL, *parent_conf;
 	int error, jsys;
+	bool has_rules, has_exec_paths;
+
+	/*
+	 * The invariants checks used below correspond to what has already been
+	 * checked in jail_check() above.
+	 */
 
 	error = vfs_copyopt(opts, "mac.do", &jsys, sizeof(jsys));
 	MPASS(error == 0 || error == ENOENT);
@@ -1720,14 +1755,12 @@ mac_do_jail_set(void *obj, void *data)
 	exec_paths_string = vfs_getopts(opts, "mac.do.exec_paths", &error);
 	MPASS(error == 0 || error == ENOENT);
 
-	const bool has_rules = (rules_string != NULL && rules_string[0] != '\0');
-	const bool has_execs = (exec_paths_string != NULL && exec_paths_string[0] != '\0');
+	has_rules = (rules_string != NULL && rules_string[0] != '\0');
+	has_exec_paths = (exec_paths_string != NULL && exec_paths_string[0] != '\0');
 
 	if (jsys == -1) {
 		if (has_rules)
 			jsys = JAIL_SYS_NEW;
-		else if (has_execs)
-			jsys = JAIL_SYS_DISABLE;
 		else
 			jsys = JAIL_SYS_DISABLE;
 	}
@@ -1738,10 +1771,8 @@ mac_do_jail_set(void *obj, void *data)
 		return (0);
 
 	case JAIL_SYS_DISABLE:
-		remove_conf(pr);
 		return (0);
 
-	struct prison *p;
 	case JAIL_SYS_NEW:
 		parent_conf = find_conf(curproc->p_ucred->cr_prison, &p);
 		prison_unlock(p);
@@ -1760,7 +1791,7 @@ mac_do_jail_set(void *obj, void *data)
 			goto fail;
 		}
 
-		if (has_execs) {
+		if (has_exec_paths) {
 			error = parse_exec_paths(exec_paths_string, &new_conf->exec_paths, &parse_error);
 			if (error != 0)
 				goto fail;
@@ -2469,8 +2500,8 @@ mac_do_destroy(struct mac_policy_conf *mpc)
 	osd_thread_deregister(osd_thread_slot);
 	osd_jail_deregister(osd_jail_slot);
 	printf("[mac_do] alloc_conf_count = %d, drop_conf_count = %d\n", alloc_conf_count, drop_conf_count);
-	printf("[mac_do] alloc_exec_paths_count = %d, drop_exec_paths_count = %d\n", alloc_exec_paths_count, drop_exec_paths_count);
-	printf("[mac_do] alloc_rules_count = %d, drop_rules_count = %d\n", alloc_rules_count, drop_rules_count);
+	printf("[mac_do] init_exec_paths_count = %d, drop_exec_paths_count = %d\n", init_exec_paths_count, drop_exec_paths_count);
+	printf("[mac_do] init_rules_count = %d, drop_rules_count = %d\n", init_rules_count, drop_rules_count);
 }
 
 static struct mac_policy_ops do_ops = {
