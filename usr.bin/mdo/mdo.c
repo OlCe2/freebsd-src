@@ -5,7 +5,6 @@
  */
 
 #include <sys/limits.h>
-#include <sys/types.h>
 #include <sys/ucred.h>
 
 #include <err.h>
@@ -30,19 +29,22 @@ main(int argc, char **argv)
 {
 	struct passwd *pw = NULL;
 	const char *username = "root";
-	const char *primary_group;
-	const char *supp_groups_str;
+	const char *primary_group = NULL;
+	const char *supp_groups_str = NULL;
+	const char *group_mod_str = NULL;
 	struct setcred wcred = SETCRED_INITIALIZER;
 	u_int setcred_flags = 0;
 	bool uidonly = false;
 	int ch;
 
-	gid_t *supp_groups;
-	size_t supp_count = 0;
 	gid_t gid = -1;
 	bool override_gid = false;
 
-	while ((ch = getopt(argc, argv, "u:ig:G:")) != -1) {
+	bool supp_reset = false;
+	gid_t *supp_add = NULL, *supp_rem = NULL;
+	size_t add_count = 0, rem_count = 0;
+
+	while ((ch = getopt(argc, argv, "u:ig:G:s:")) != -1) {
 		switch (ch) {
 		case 'u':
 			username = optarg;
@@ -56,19 +58,19 @@ main(int argc, char **argv)
 		case 'G':
 			supp_groups_str = optarg;
 			break;
+		case 's':
+			group_mod_str = optarg;
+			break;
 		default:
 			usage();
 		}
 	}
 
-	if (uidonly && (primary_group || supp_groups_str))
-		errx(EXIT_FAILURE, "-i cannot be used with -g and -G");
+	if (uidonly && (primary_group || supp_groups_str || group_mod_str))
+		errx(EXIT_FAILURE, "-i cannot be used with -g, -G, or -s");
 
 	argc -= optind;
 	argv += optind;
-
-	//uid_t target_uid = getuid();
-	gid_t target_gid = getgid();
 
 	if (username) {
 		if ((pw = getpwnam(username)) == NULL) {
@@ -76,15 +78,12 @@ main(int argc, char **argv)
 				const char *errp = NULL;
 				uid_t uid = strtonum(username, 0, UID_MAX, &errp);
 				if (errp != NULL)
-					err(EXIT_FAILURE, "invalid user ID '%s'",
-						username);
+					err(EXIT_FAILURE, "invalid user ID '%s'", username);
 				pw = getpwuid(uid);
 			}
 			if (pw == NULL)
 				err(EXIT_FAILURE, "invalid username '%s'", username);
 		}
-		//target_uid = pw->pw_uid;
-		target_gid = pw->pw_gid;
 	}
 
 	wcred.sc_uid = wcred.sc_ruid = wcred.sc_svuid = pw->pw_uid;
@@ -102,7 +101,7 @@ main(int argc, char **argv)
 		}
 		override_gid = true;
 	} else if (!uidonly && pw) {
-		gid = target_gid;
+		gid = pw->pw_gid;
 		override_gid = true;
 	}
 
@@ -111,62 +110,87 @@ main(int argc, char **argv)
 		setcred_flags |= SETCREDF_GID | SETCREDF_RGID | SETCREDF_SVGID;
 	}
 
-	if (supp_groups_str) {
-		char *groups_copy = strdup(supp_groups_str);
-		if (!groups_copy)
-			err(EXIT_FAILURE, "malloc failed");
-
-		size_t alloc = 16;
-		supp_groups = malloc(sizeof(gid_t) * alloc);
-		if (!supp_groups)
-			err(EXIT_FAILURE, "malloc failed");
-
-		char *token = strtok(groups_copy, ",");
-		while (token) {
-			if (supp_count >= alloc) {
-				alloc *= 2;
-				supp_groups = realloc(supp_groups, sizeof(gid_t) * alloc);
-				if (!supp_groups)
-					err(EXIT_FAILURE, "realloc failed");
+	// Handle -s
+	if (group_mod_str) {
+		char *s = strdup(group_mod_str);
+		if (!s) err(EXIT_FAILURE, "strdup failed");
+		char *tok = strtok(s, ",");
+		while (tok) {
+			if (strcmp(tok, "!") == 0) {
+				supp_reset = true;
+			} else if (tok[0] == '+' || tok[0] == '-') {
+				bool is_add = tok[0] == '+';
+				const char *gstr = tok + 1;
+				struct group *gr = getgrnam(gstr);
+				if (gr)
+					gid = gr->gr_gid;
+				else {
+					const char *errp = NULL;
+					gid = strtonum(gstr, 0, GID_MAX, &errp);
+					if (errp != NULL)
+						err(EXIT_FAILURE, "invalid group '%s'", gstr);
+				}
+				if (is_add) {
+					supp_add = realloc(supp_add, sizeof(gid_t) * (add_count + 1));
+					if (!supp_add) err(EXIT_FAILURE, "realloc failed");
+					supp_add[add_count++] = gid;
+				} else {
+					supp_rem = realloc(supp_rem, sizeof(gid_t) * (rem_count + 1));
+					if (!supp_rem) err(EXIT_FAILURE, "realloc failed");
+					supp_rem[rem_count++] = gid;
+				}
+			} else {
+				errx(EXIT_FAILURE, "invalid -s entry '%s'", tok);
 			}
-			struct group *gr = getgrnam(token);
-			if (gr)
-				supp_groups[supp_count++] = gr->gr_gid;
-			else {
-				const char *errp = NULL;
-				gid_t g = strtonum(token, 0, GID_MAX, &errp);
-				if (errp != NULL)
-					err(EXIT_FAILURE, "invalid supplementary group '%s'", token);
-				supp_groups[supp_count++] = g;
-			}
-			token = strtok(NULL, ",");
+			tok = strtok(NULL, ",");
+		}
+		free(s);
+	}
+
+	// Final supplementary group list
+	if (supp_groups_str || group_mod_str || (!uidonly && pw)) {
+		gid_t *base = NULL;
+		int base_count = 0;
+
+		if (!supp_reset && pw) {
+			const long max = sysconf(_SC_NGROUPS_MAX) + 2;
+			base = malloc(sizeof(*base) * max);
+			if (!base) err(EXIT_FAILURE, "malloc failed");
+			base_count = max;
+			getgrouplist(pw->pw_name, pw->pw_gid, base, &base_count);
 		}
 
-		free(groups_copy);
-		wcred.sc_supp_groups = supp_groups;
-		wcred.sc_supp_groups_nb = supp_count;
-		setcred_flags |= SETCREDF_SUPP_GROUPS;
+		// Build set of gids from base - removed + added
+		size_t final_count = 0;
+		gid_t *final = malloc(sizeof(gid_t) * (base_count + add_count));
+		if (!final) err(EXIT_FAILURE, "malloc failed");
 
-	} else if (!uidonly && pw) {
-		/*
-		 * If there are too many groups specified for some UID, setting
-		 * the groups will fail.  We preserve this condition by
-		 * allocating one more group slot than allowed, as
-		 * getgrouplist() itself is just some getter function and thus
-		 * doesn't (and shouldn't) check the limit, and to allow
-		 * setcred() to actually check for overflow.
-		 */
-		const long ngroups_alloc = sysconf(_SC_NGROUPS_MAX) + 2;
-		gid_t *groups = malloc(sizeof(*groups) * ngroups_alloc);
-		int ngroups = ngroups_alloc;
+		// Copy base, skipping removals
+		for (int i = 0; i < base_count; ++i) {
+			bool skip = false;
+			for (size_t j = 0; j < rem_count; ++j)
+				if (base[i] == supp_rem[j]) {
+					skip = true;
+					break;
+				}
+			if (!skip)
+				final[final_count++] = base[i];
+		}
 
-		if (groups == NULL)
-			err(EXIT_FAILURE, "cannot allocate memory for groups");
+		// Add new gids (if not already present)
+		for (size_t i = 0; i < add_count; ++i) {
+			bool exists = false;
+			for (size_t j = 0; j < final_count; ++j)
+				if (final[j] == supp_add[i]) {
+					exists = true;
+					break;
+				}
+			if (!exists)
+				final[final_count++] = supp_add[i];
+		}
 
-		getgrouplist(pw->pw_name, pw->pw_gid, groups, &ngroups);
-
-		wcred.sc_supp_groups = groups + 1;
-		wcred.sc_supp_groups_nb = ngroups - 1;
+		wcred.sc_supp_groups = final;
+		wcred.sc_supp_groups_nb = final_count;
 		setcred_flags |= SETCREDF_SUPP_GROUPS;
 	}
 
