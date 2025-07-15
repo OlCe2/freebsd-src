@@ -20,7 +20,7 @@
 static void
 usage(void)
 {
-	fprintf(stderr, "usage: mdo [-u username] [-i] [--] [command [args]]\n");
+	fprintf(stderr, "usage: mdo [-u username] [-i] [-g primary] [-G supplementary] [-s add/remove supplementary] [--] [command [args]]\n");
 	exit(EXIT_FAILURE);
 }
 
@@ -110,13 +110,39 @@ main(int argc, char **argv)
 		setcred_flags |= SETCREDF_GID | SETCREDF_RGID | SETCREDF_SVGID;
 	}
 
-	// Handle -s
+	if (supp_groups_str) {
+		char *copy = strdup(supp_groups_str);
+		if (!copy)
+			err(EXIT_FAILURE, "strdup failed");
+		char *tok = strtok(copy, ",");
+		while (tok) {
+			struct group *gr = getgrnam(tok);
+			gid_t g;
+			if (gr)
+				g = gr->gr_gid;
+			else {
+				const char *errp = NULL;
+				g = strtonum(tok, 0, GID_MAX, &errp);
+				if (errp != NULL)
+					err(EXIT_FAILURE, "invalid group '%s", tok);
+			}
+			supp_add = realloc(supp_add, sizeof(gid_t) * (add_count + 1));
+			if (!supp_add)
+				err(EXIT_FAILURE, "realloc failed");
+			supp_add[add_count++] = g;
+			tok = strtok(NULL, ",");
+		}
+		free(copy);
+		supp_reset = true;
+	}
+
 	if (group_mod_str) {
 		char *s = strdup(group_mod_str);
-		if (!s) err(EXIT_FAILURE, "strdup failed");
+		if (!s)
+			err(EXIT_FAILURE, "strdup failed");
 		char *tok = strtok(s, ",");
 		while (tok) {
-			if (strcmp(tok, "!") == 0) {
+			if (strcmp(tok, "@") == 0) {
 				supp_reset = true;
 			} else if (tok[0] == '+' || tok[0] == '-') {
 				bool is_add = tok[0] == '+';
@@ -147,44 +173,80 @@ main(int argc, char **argv)
 		free(s);
 	}
 
-	// Final supplementary group list
-	if (supp_groups_str || group_mod_str || (!uidonly && pw)) {
+	if (supp_reset) {
+		gid_t *final = NULL;
+		size_t final_count = 0;
+
+		if (add_count > 0) {
+			final = malloc(sizeof(gid_t) * add_count);
+			if (!final)
+				err(EXIT_FAILURE, "malloc failed");
+
+			for (size_t i = 0; i < add_count; ++i) {
+				final[final_count++] = supp_add[i];
+			}
+		}
+
+		wcred.sc_supp_groups = final;
+		wcred.sc_supp_groups_nb = final_count;
+		setcred_flags |= SETCREDF_SUPP_GROUPS;
+	} else if (!supp_reset && (group_mod_str || !uidonly)) {
 		gid_t *base = NULL;
 		int base_count = 0;
+		size_t alloc;
+		gid_t *final;
+		size_t final_count = 0;
 
+		/*
+		 * If there are too many groups specified for some UID, setting
+		 * the groups will fail.  We preserve this condition by
+		 * allocating one more group slot than allowed, as
+		 * getgrouplist() itself is just some getter function and thus
+		 * doesn't (and shouldn't) check the limit, and to allow
+		 * setcred() to actually check for overflow.
+		 */
 		if (!supp_reset && pw) {
 			const long max = sysconf(_SC_NGROUPS_MAX) + 2;
 			base = malloc(sizeof(*base) * max);
-			if (!base) err(EXIT_FAILURE, "malloc failed");
+			if (!base)
+				err(EXIT_FAILURE, "malloc failed");
 			base_count = max;
 			getgrouplist(pw->pw_name, pw->pw_gid, base, &base_count);
 		}
 
-		// Build set of gids from base - removed + added
-		size_t final_count = 0;
-		gid_t *final = malloc(sizeof(gid_t) * (base_count + add_count));
-		if (!final) err(EXIT_FAILURE, "malloc failed");
+		alloc = base_count + add_count + rem_count + 4;
+		final = malloc(sizeof(gid_t) * alloc);
 
-		// Copy base, skipping removals
+		if (!final)
+			err(EXIT_FAILURE, "malloc failed");
+
 		for (int i = 0; i < base_count; ++i) {
 			bool skip = false;
-			for (size_t j = 0; j < rem_count; ++j)
+			for (size_t j = 0; j < rem_count; ++j) {
 				if (base[i] == supp_rem[j]) {
 					skip = true;
 					break;
 				}
+			}
+
+			for (size_t j = 0; j < final_count && !skip; ++j) {
+				if (final[j] == base[i]) {
+					skip = true;
+					break;
+				}
+			}
 			if (!skip)
 				final[final_count++] = base[i];
 		}
 
-		// Add new gids (if not already present)
 		for (size_t i = 0; i < add_count; ++i) {
 			bool exists = false;
-			for (size_t j = 0; j < final_count; ++j)
+			for (size_t j = 0; j < final_count; ++j) {
 				if (final[j] == supp_add[i]) {
 					exists = true;
 					break;
 				}
+			}
 			if (!exists)
 				final[final_count++] = supp_add[i];
 		}
