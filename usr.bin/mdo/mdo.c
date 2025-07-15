@@ -44,7 +44,9 @@ main(int argc, char **argv)
 	gid_t *supp_add = NULL, *supp_rem = NULL;
 	size_t add_count = 0, rem_count = 0;
 
-	while ((ch = getopt(argc, argv, "u:ig:G:s:")) != -1) {
+	const char *ruid_str = NULL, *svuid_str = NULL, *euid_str = NULL, *rgid_str = NULL, *svgid_str = NULL;
+
+	while ((ch = getopt(argc, argv, "u:ig:G:s:U:R:E:P:Q:")) != -1) {
 		switch (ch) {
 		case 'u':
 			username = optarg;
@@ -60,6 +62,21 @@ main(int argc, char **argv)
 			break;
 		case 's':
 			group_mod_str = optarg;
+			break;
+		case 'U':
+			ruid_str = optarg;
+			break;
+		case 'R':
+			svuid_str = optarg;
+			break;
+		case 'E':
+			euid_str = optarg;
+			break;
+		case 'P':
+			rgid_str = optarg;
+			break;
+		case 'Q':
+			svgid_str = optarg;
 			break;
 		default:
 			usage();
@@ -88,6 +105,42 @@ main(int argc, char **argv)
 
 	wcred.sc_uid = wcred.sc_ruid = wcred.sc_svuid = pw->pw_uid;
 	setcred_flags |= SETCREDF_UID | SETCREDF_RUID | SETCREDF_SVUID;
+
+	if (ruid_str) {
+		const char *errp = NULL;
+		wcred.sc_ruid = strtonum(ruid_str, 0, UID_MAX, &errp);
+		if (errp)
+			err(EXIT_FAILURE, "-U: invalid UID");
+		setcred_flags |= SETCREDF_RUID;
+	}
+	if (svuid_str) {
+		const char *errp = NULL;
+		wcred.sc_svuid = strtonum(svuid_str, 0, UID_MAX, &errp);
+		if (errp)
+			err(EXIT_FAILURE, "-U: invalid UID");
+		setcred_flags |= SETCREDF_SVUID;
+	}
+	if (euid_str) {
+		const char *errp = NULL;
+		wcred.sc_uid = strtonum(euid_str, 0, UID_MAX, &errp);
+		if (errp)
+			err(EXIT_FAILURE, "-U: invalid UID");
+		setcred_flags |= SETCREDF_UID;
+	}
+	if (rgid_str) {
+		const char *errp = NULL;
+		wcred.sc_rgid = strtonum(rgid_str, 0, GID_MAX, &errp);
+		if (errp)
+			err(EXIT_FAILURE, "-U: invalid GID");
+		setcred_flags |= SETCREDF_RGID;
+	}
+	if (svgid_str) {
+		const char *errp = NULL;
+		wcred.sc_svuid = strtonum(svgid_str, 0, GID_MAX, &errp);
+		if (errp)
+			err(EXIT_FAILURE, "-U: invalid GID");
+		setcred_flags |= SETCREDF_SVGID;
+	}
 
 	if (primary_group) {
 		struct group *gr = getgrnam(primary_group);
