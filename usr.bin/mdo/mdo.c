@@ -20,8 +20,33 @@
 static void
 usage(void)
 {
-	fprintf(stderr, "usage: mdo [-u username] [-i] [-g primary] [-G supplementary] [-s add/remove supplementary] [--] [command [args]]\n");
-	exit(EXIT_FAILURE);
+	fprintf(stderr,
+		"Usage: mdo [options] [--] [command [args...]]\n"
+		"\n"
+		"Options:\n"
+		"  -u <user>       Target user (name or UID)\n"
+		"  -i              Only change UID, skip groups\n"
+		"  -g <group>      Override primary group (name or GID)\n"
+		"  -G <g1,g2,...>  Set supplementary groups (name or GID list)\n"
+		"  -s <mods>       Modify supplementary groups using:\n"
+		"                   +group to add, -group to remove, @ to reset\n"
+		"\n"
+		"Advanced UID/GID overrides:\n"
+		"  -U <ruid>       Set real UID\n"
+		"  -R <svuid>      Set saved UID\n"
+		"  -E <euid>       Set effective UID\n"
+		"  -P <rgid>       Set real GID\n"
+		"  -Q <svgid>      Set saved GID\n"
+		"\n"
+		"  -h              Show this help message\n"
+		"\n"
+		"Examples:\n"
+		"  mdo -u alice id\n"
+		"  mdo -u 1001 -g wheel -G staff,operator /bin/sh\n"
+		"  mdo -u bob -s @,+wheel,+operator /usr/bin/id\n"
+		"  mdo -E 1002 -R 1003 -U 1004 /bin/id\n"
+	);
+	exit(1);
 }
 
 int
