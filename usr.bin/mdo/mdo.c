@@ -38,6 +38,7 @@ usage(void)
 		"  -P <rgid>       Set real GID\n"
 		"  -Q <svgid>      Set saved GID\n"
 		"\n"
+		"  --print-rule	  Print the actual rules of transition in mac.do.rules format\n"
 		"  -h              Show this help message\n"
 		"\n"
 		"Examples:\n"
@@ -71,7 +72,20 @@ main(int argc, char **argv)
 
 	const char *ruid_str = NULL, *svuid_str = NULL, *euid_str = NULL, *rgid_str = NULL, *svgid_str = NULL;
 
-	while ((ch = getopt(argc, argv, "u:ig:G:s:U:R:E:P:Q:")) != -1) {
+	bool print_rule = false;
+	for (int i = 1; i < argc; i++) {
+		if (strcmp(argv[i], "--print-rule") == 0) {
+			print_rule = true;
+
+			for (int j = i; j < argc - 1; j++) {
+				argv[j] = argv[j+1];
+			}
+			argc--;
+			break;
+		}
+	}
+
+	while ((ch = getopt(argc, argv, "u:ig:G:s:U:R:E:P:Q:h")) != -1) {
 		switch (ch) {
 		case 'u':
 			username = optarg;
@@ -103,6 +117,8 @@ main(int argc, char **argv)
 		case 'Q':
 			svgid_str = optarg;
 			break;
+		case 'h':
+			usage();
 		default:
 			usage();
 		}
@@ -332,6 +348,45 @@ main(int argc, char **argv)
 		wcred.sc_supp_groups = final;
 		wcred.sc_supp_groups_nb = final_count;
 		setcred_flags |= SETCREDF_SUPP_GROUPS;
+	}
+
+	if (print_rule) {
+		uid_t src_uid = getuid();
+		gid_t src_gid = getgid();
+		int ngroups = getgroups(0, NULL);
+		gid_t *groups  = NULL;
+
+		if (ngroups > 0) {
+			groups = malloc(sizeof(gid_t) * ngroups);
+			if (getgroups(ngroups, groups) < 0)
+				err(EXIT_FAILURE, "getgroups() failed");
+		}
+
+		fprintf(stdout, "%u:%u", src_uid, src_gid);
+		if (ngroups > 0) {
+			fprintf(stdout, "+");
+			for (int i = 0; i < ngroups; i++) {
+				if (i > 0)
+					fprintf(stdout, ",");
+				fprintf(stdout, "%u", groups[i]);
+			}
+		}
+		fprintf(stdout, " -> ");
+
+		fprintf(stdout, "%u:%u", wcred.sc_uid, wcred.sc_gid);
+		if (setcred_flags & SETCREDF_SUPP_GROUPS && wcred.sc_supp_groups_nb > 0) {
+			fprintf(stdout, "+");
+			for (size_t i = 0; i < wcred.sc_supp_groups_nb; i++) {
+				if (i > 0)
+					fprintf(stdout, ",");
+				fprintf(stdout, "%u", wcred.sc_supp_groups[i]);
+			}
+		}
+		fprintf(stdout, "\n");
+
+		if (groups)
+			free(groups);
+		exit(0);
 	}
 
 	if (setcred(setcred_flags, &wcred, sizeof(wcred)) != 0)
