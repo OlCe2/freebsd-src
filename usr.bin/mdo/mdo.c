@@ -158,28 +158,28 @@ main(int argc, char **argv)
 		const char *errp = NULL;
 		wcred.sc_svuid = strtonum(svuid_str, 0, UID_MAX, &errp);
 		if (errp)
-			err(EXIT_FAILURE, "-U: invalid UID");
+			err(EXIT_FAILURE, "-R: invalid UID");
 		setcred_flags |= SETCREDF_SVUID;
 	}
 	if (euid_str) {
 		const char *errp = NULL;
 		wcred.sc_uid = strtonum(euid_str, 0, UID_MAX, &errp);
 		if (errp)
-			err(EXIT_FAILURE, "-U: invalid UID");
+			err(EXIT_FAILURE, "-E: invalid UID");
 		setcred_flags |= SETCREDF_UID;
 	}
 	if (rgid_str) {
 		const char *errp = NULL;
 		wcred.sc_rgid = strtonum(rgid_str, 0, GID_MAX, &errp);
 		if (errp)
-			err(EXIT_FAILURE, "-U: invalid GID");
+			err(EXIT_FAILURE, "-P: invalid GID");
 		setcred_flags |= SETCREDF_RGID;
 	}
 	if (svgid_str) {
 		const char *errp = NULL;
 		wcred.sc_svuid = strtonum(svgid_str, 0, GID_MAX, &errp);
 		if (errp)
-			err(EXIT_FAILURE, "-U: invalid GID");
+			err(EXIT_FAILURE, "-Q: invalid GID");
 		setcred_flags |= SETCREDF_SVGID;
 	}
 
