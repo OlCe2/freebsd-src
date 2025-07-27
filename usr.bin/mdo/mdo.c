@@ -5,6 +5,7 @@
  */
 
 #include <sys/limits.h>
+#include <sys/types.h>
 #include <sys/ucred.h>
 
 #include <err.h>
@@ -49,6 +50,35 @@ usage(void)
 		"  mdo -E 1002 -R 1003 -U 1004 /bin/id\n"
 	);
 	exit(1);
+}
+
+static uid_t
+parse_uid(const char *s)
+{
+	struct passwd *pw = getpwnam(s);
+	
+	if (pw != NULL)
+		return pw->pw_uid;
+
+	const char *errp;
+	uid_t uid = strtonum(s, 0 , UID_MAX, &errp);
+	if (errp)
+		errx(EXIT_FAILURE, "invalid UID '%s': %s", s, errp);
+
+	return uid;
+}
+
+static gid_t
+parse_gid(const char *s)
+{
+	struct group *gr = getgrnam(s);
+	if (gr != NULL)
+		return gr->gr_gid;
+
+	const char *errp;
+	gid_t gid = strtonum(s, 0, GID_MAX, &errp);
+
+	return gid;
 }
 
 int
@@ -149,51 +179,28 @@ main(int argc, char **argv)
 	setcred_flags |= SETCREDF_UID | SETCREDF_RUID | SETCREDF_SVUID;
 
 	if (ruid_str != NULL) {
-		const char *errp = NULL;
-		wcred.sc_ruid = strtonum(ruid_str, 0, UID_MAX, &errp);
-		if (errp != NULL)
-			err(EXIT_FAILURE, "-U: invalid UID");
+		wcred.sc_ruid = parse_uid(ruid_str);
 		setcred_flags |= SETCREDF_RUID;
 	}
 	if (svuid_str != NULL) {
-		const char *errp = NULL;
-		wcred.sc_svuid = strtonum(svuid_str, 0, UID_MAX, &errp);
-		if (errp != NULL)
-			err(EXIT_FAILURE, "-R: invalid UID");
+		wcred.sc_svuid = parse_uid(svuid_str);
 		setcred_flags |= SETCREDF_SVUID;
 	}
 	if (euid_str != NULL) {
-		const char *errp = NULL;
-		wcred.sc_uid = strtonum(euid_str, 0, UID_MAX, &errp);
-		if (errp != NULL)
-			err(EXIT_FAILURE, "-E: invalid UID");
+		wcred.sc_uid = parse_uid(euid_str);
 		setcred_flags |= SETCREDF_UID;
 	}
 	if (rgid_str != NULL) {
-		const char *errp = NULL;
-		wcred.sc_rgid = strtonum(rgid_str, 0, GID_MAX, &errp);
-		if (errp != NULL)
-			err(EXIT_FAILURE, "-P: invalid GID");
+		wcred.sc_rgid = parse_gid(rgid_str);
 		setcred_flags |= SETCREDF_RGID;
 	}
 	if (svgid_str != NULL) {
-		const char *errp = NULL;
-		wcred.sc_svuid = strtonum(svgid_str, 0, GID_MAX, &errp);
-		if (errp != NULL)
-			err(EXIT_FAILURE, "-Q: invalid GID");
+		wcred.sc_svgid = parse_gid(svgid_str);
 		setcred_flags |= SETCREDF_SVGID;
 	}
 
 	if (primary_group != NULL) {
-		struct group *gr = getgrnam(primary_group);
-		if (gr != NULL)
-			gid = gr->gr_gid;
-		else {
-			const char *errp = NULL;
-			gid = strtonum(primary_group, 0, GID_MAX, &errp);
-			if (errp != NULL)
-				err(EXIT_FAILURE, "invalid group '%s'", primary_group);
-		}
+		gid = parse_gid(primary_group);
 		override_gid = true;
 	} else if (pw != NULL && !uidonly) {
 		gid = pw->pw_gid;
@@ -211,16 +218,7 @@ main(int argc, char **argv)
 			err(EXIT_FAILURE, "strdup failed");
 		char *tok = strtok(copy, ",");
 		while (tok != NULL) {
-			struct group *gr = getgrnam(tok);
-			gid_t g;
-			if (gr != NULL)
-				g = gr->gr_gid;
-			else {
-				const char *errp = NULL;
-				g = strtonum(tok, 0, GID_MAX, &errp);
-				if (errp != NULL)
-					err(EXIT_FAILURE, "invalid group '%s", tok);
-			}
+			gid_t g = parse_gid(tok);
 			supp_add = realloc(supp_add, sizeof(gid_t) * (add_count + 1));
 			if (supp_add == NULL)
 				err(EXIT_FAILURE, "realloc failed");
@@ -232,25 +230,21 @@ main(int argc, char **argv)
 	}
 
 	if (group_mod_str != NULL) {
+		int i = 0;
 		char *s = strdup(group_mod_str);
 		if (s == NULL)
 			err(EXIT_FAILURE, "strdup failed");
+
 		char *tok = strtok(s, ",");
 		while (tok != NULL) {
 			if (strcmp(tok, "@") == 0) {
+				if (i > 0)
+					errx(EXIT_FAILURE, "'@' must be the first token in -s option");
 				supp_reset = true;
 			} else if (tok[0] == '+' || tok[0] == '-') {
 				bool is_add = tok[0] == '+';
 				const char *gstr = tok + 1;
-				struct group *gr = getgrnam(gstr);
-				if (gr != NULL)
-					gid = gr->gr_gid;
-				else {
-					const char *errp = NULL;
-					gid = strtonum(gstr, 0, GID_MAX, &errp);
-					if (errp != NULL)
-						err(EXIT_FAILURE, "invalid group '%s'", gstr);
-				}
+				gid = parse_gid(gstr);
 				if (is_add) {
 					supp_add = realloc(supp_add, sizeof(gid_t) * (add_count + 1));
 					if (!supp_add)
@@ -266,6 +260,7 @@ main(int argc, char **argv)
 				errx(EXIT_FAILURE, "invalid -s entry '%s'", tok);
 			}
 			tok = strtok(NULL, ",");
+			i++;
 		}
 		free(s);
 	}
