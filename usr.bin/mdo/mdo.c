@@ -8,6 +8,7 @@
 #include <sys/ucred.h>
 
 #include <err.h>
+#include <getopt.h>
 #include <grp.h>
 #include <paths.h>
 #include <pwd.h>
@@ -32,14 +33,14 @@ usage(void)
 		"                   +group to add, -group to remove, @ to reset\n"
 		"\n"
 		"Advanced UID/GID overrides:\n"
-		"  -U <ruid>       Set real UID\n"
-		"  -R <svuid>      Set saved UID\n"
-		"  -E <euid>       Set effective UID\n"
-		"  -P <rgid>       Set real GID\n"
-		"  -Q <svgid>      Set saved GID\n"
+		"  --ruid <uid>       Set real UID\n"
+		"  --svuid <uid>      Set saved UID\n"
+		"  --euid <uid>       Set effective UID\n"
+		"  --rgid <gid>       Set real GID\n"
+		"  --svgid <gid>      Set saved GID\n"
 		"\n"
-		"  --print-rule	  Print the actual rules of transition in mac.do.rules format\n"
-		"  -h              Show this help message\n"
+		"  --print-rule/-r    Print the actual rules of transition in mac.do.rules format\n"
+		"  -h              	  Show this help message\n"
 		"\n"
 		"Examples:\n"
 		"  mdo -u alice id\n"
@@ -70,22 +71,22 @@ main(int argc, char **argv)
 	gid_t *supp_add = NULL, *supp_rem = NULL;
 	size_t add_count = 0, rem_count = 0;
 
-	const char *ruid_str = NULL, *svuid_str = NULL, *euid_str = NULL, *rgid_str = NULL, *svgid_str = NULL;
+	const char *ruid_str = NULL, *svuid_str = NULL, *euid_str = NULL;
+	char *rgid_str = NULL, *svgid_str = NULL;
 
 	bool print_rule = false;
-	for (int i = 1; i < argc; i++) {
-		if (strcmp(argv[i], "--print-rule") == 0) {
-			print_rule = true;
 
-			for (int j = i; j < argc - 1; j++) {
-				argv[j] = argv[j+1];
-			}
-			argc--;
-			break;
-		}
-	}
+	const struct option longopts[] = {
+		{"ruid", required_argument, NULL, 1000},
+		{"svuid", required_argument, NULL, 1001},
+		{"euid", required_argument, NULL, 1002},
+		{"rgid", required_argument, NULL, 1003},
+		{"svgid", required_argument, NULL, 1004},
+		{"print-rule", no_argument, NULL, 'r'},
+		{NULL, 0, NULL, 0}
+	};
 
-	while ((ch = getopt(argc, argv, "u:ig:G:s:U:R:E:P:Q:h")) != -1) {
+	while ((ch = getopt_long(argc, argv, "u:ig:G:s:rh", longopts, NULL)) != -1) {
 		switch (ch) {
 		case 'u':
 			username = optarg;
@@ -102,20 +103,23 @@ main(int argc, char **argv)
 		case 's':
 			group_mod_str = optarg;
 			break;
-		case 'U':
+		case 1000:
 			ruid_str = optarg;
 			break;
-		case 'R':
+		case 1001:
 			svuid_str = optarg;
 			break;
-		case 'E':
+		case 1002:
 			euid_str = optarg;
 			break;
-		case 'P':
+		case 1003:
 			rgid_str = optarg;
 			break;
-		case 'Q':
+		case 1004:
 			svgid_str = optarg;
+			break;
+		case 'r':
+			print_rule = true;
 			break;
 		case 'h':
 			usage();
@@ -123,9 +127,6 @@ main(int argc, char **argv)
 			usage();
 		}
 	}
-
-	if (uidonly && (primary_group || supp_groups_str || group_mod_str))
-		errx(EXIT_FAILURE, "-i cannot be used with -g, -G, or -s");
 
 	argc -= optind;
 	argv += optind;
@@ -147,45 +148,45 @@ main(int argc, char **argv)
 	wcred.sc_uid = wcred.sc_ruid = wcred.sc_svuid = pw->pw_uid;
 	setcred_flags |= SETCREDF_UID | SETCREDF_RUID | SETCREDF_SVUID;
 
-	if (ruid_str) {
+	if (ruid_str != NULL) {
 		const char *errp = NULL;
 		wcred.sc_ruid = strtonum(ruid_str, 0, UID_MAX, &errp);
-		if (errp)
+		if (errp != NULL)
 			err(EXIT_FAILURE, "-U: invalid UID");
 		setcred_flags |= SETCREDF_RUID;
 	}
-	if (svuid_str) {
+	if (svuid_str != NULL) {
 		const char *errp = NULL;
 		wcred.sc_svuid = strtonum(svuid_str, 0, UID_MAX, &errp);
-		if (errp)
+		if (errp != NULL)
 			err(EXIT_FAILURE, "-R: invalid UID");
 		setcred_flags |= SETCREDF_SVUID;
 	}
-	if (euid_str) {
+	if (euid_str != NULL) {
 		const char *errp = NULL;
 		wcred.sc_uid = strtonum(euid_str, 0, UID_MAX, &errp);
-		if (errp)
+		if (errp != NULL)
 			err(EXIT_FAILURE, "-E: invalid UID");
 		setcred_flags |= SETCREDF_UID;
 	}
-	if (rgid_str) {
+	if (rgid_str != NULL) {
 		const char *errp = NULL;
 		wcred.sc_rgid = strtonum(rgid_str, 0, GID_MAX, &errp);
-		if (errp)
+		if (errp != NULL)
 			err(EXIT_FAILURE, "-P: invalid GID");
 		setcred_flags |= SETCREDF_RGID;
 	}
-	if (svgid_str) {
+	if (svgid_str != NULL) {
 		const char *errp = NULL;
 		wcred.sc_svuid = strtonum(svgid_str, 0, GID_MAX, &errp);
-		if (errp)
+		if (errp != NULL)
 			err(EXIT_FAILURE, "-Q: invalid GID");
 		setcred_flags |= SETCREDF_SVGID;
 	}
 
-	if (primary_group) {
+	if (primary_group != NULL) {
 		struct group *gr = getgrnam(primary_group);
-		if (gr)
+		if (gr != NULL)
 			gid = gr->gr_gid;
 		else {
 			const char *errp = NULL;
@@ -194,7 +195,7 @@ main(int argc, char **argv)
 				err(EXIT_FAILURE, "invalid group '%s'", primary_group);
 		}
 		override_gid = true;
-	} else if (!uidonly && pw) {
+	} else if (pw != NULL && !uidonly) {
 		gid = pw->pw_gid;
 		override_gid = true;
 	}
@@ -204,15 +205,15 @@ main(int argc, char **argv)
 		setcred_flags |= SETCREDF_GID | SETCREDF_RGID | SETCREDF_SVGID;
 	}
 
-	if (supp_groups_str) {
+	if (supp_groups_str != NULL) {
 		char *copy = strdup(supp_groups_str);
-		if (!copy)
+		if (copy == NULL)
 			err(EXIT_FAILURE, "strdup failed");
 		char *tok = strtok(copy, ",");
-		while (tok) {
+		while (tok != NULL) {
 			struct group *gr = getgrnam(tok);
 			gid_t g;
-			if (gr)
+			if (gr != NULL)
 				g = gr->gr_gid;
 			else {
 				const char *errp = NULL;
@@ -221,7 +222,7 @@ main(int argc, char **argv)
 					err(EXIT_FAILURE, "invalid group '%s", tok);
 			}
 			supp_add = realloc(supp_add, sizeof(gid_t) * (add_count + 1));
-			if (!supp_add)
+			if (supp_add == NULL)
 				err(EXIT_FAILURE, "realloc failed");
 			supp_add[add_count++] = g;
 			tok = strtok(NULL, ",");
@@ -230,19 +231,19 @@ main(int argc, char **argv)
 		supp_reset = true;
 	}
 
-	if (group_mod_str) {
+	if (group_mod_str != NULL) {
 		char *s = strdup(group_mod_str);
-		if (!s)
+		if (s == NULL)
 			err(EXIT_FAILURE, "strdup failed");
 		char *tok = strtok(s, ",");
-		while (tok) {
+		while (tok != NULL) {
 			if (strcmp(tok, "@") == 0) {
 				supp_reset = true;
 			} else if (tok[0] == '+' || tok[0] == '-') {
 				bool is_add = tok[0] == '+';
 				const char *gstr = tok + 1;
 				struct group *gr = getgrnam(gstr);
-				if (gr)
+				if (gr != NULL)
 					gid = gr->gr_gid;
 				else {
 					const char *errp = NULL;
@@ -252,11 +253,13 @@ main(int argc, char **argv)
 				}
 				if (is_add) {
 					supp_add = realloc(supp_add, sizeof(gid_t) * (add_count + 1));
-					if (!supp_add) err(EXIT_FAILURE, "realloc failed");
+					if (!supp_add)
+						err(EXIT_FAILURE, "realloc failed");
 					supp_add[add_count++] = gid;
 				} else {
 					supp_rem = realloc(supp_rem, sizeof(gid_t) * (rem_count + 1));
-					if (!supp_rem) err(EXIT_FAILURE, "realloc failed");
+					if (!supp_rem)
+						err(EXIT_FAILURE, "realloc failed");
 					supp_rem[rem_count++] = gid;
 				}
 			} else {
@@ -273,7 +276,7 @@ main(int argc, char **argv)
 
 		if (add_count > 0) {
 			final = malloc(sizeof(gid_t) * add_count);
-			if (!final)
+			if (final == NULL)
 				err(EXIT_FAILURE, "malloc failed");
 
 			for (size_t i = 0; i < add_count; ++i) {
@@ -284,7 +287,7 @@ main(int argc, char **argv)
 		wcred.sc_supp_groups = final;
 		wcred.sc_supp_groups_nb = final_count;
 		setcred_flags |= SETCREDF_SUPP_GROUPS;
-	} else if (!supp_reset && (group_mod_str || !uidonly)) {
+	} else if (group_mod_str != NULL || supp_add != NULL || supp_rem != NULL || (!uidonly && pw != NULL)) {
 		gid_t *base = NULL;
 		int base_count = 0;
 		size_t alloc;
@@ -299,7 +302,7 @@ main(int argc, char **argv)
 		 * doesn't (and shouldn't) check the limit, and to allow
 		 * setcred() to actually check for overflow.
 		 */
-		if (!supp_reset && pw) {
+		if (pw != NULL) {
 			const long max = sysconf(_SC_NGROUPS_MAX) + 2;
 			base = malloc(sizeof(*base) * max);
 			if (!base)
@@ -311,7 +314,7 @@ main(int argc, char **argv)
 		alloc = base_count + add_count + rem_count + 4;
 		final = malloc(sizeof(gid_t) * alloc);
 
-		if (!final)
+		if (final == NULL)
 			err(EXIT_FAILURE, "malloc failed");
 
 		for (int i = 0; i < base_count; ++i) {
@@ -384,7 +387,7 @@ main(int argc, char **argv)
 		}
 		fprintf(stdout, "\n");
 
-		if (groups)
+		if (groups != NULL)
 			free(groups);
 		exit(0);
 	}
