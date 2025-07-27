@@ -349,8 +349,6 @@ main(int argc, char **argv)
 	}
 
 	if (print_rule) {
-		uid_t src_uid = getuid();
-		gid_t src_gid = getgid();
 		int ngroups = getgroups(0, NULL);
 		gid_t *groups  = NULL;
 
@@ -360,20 +358,9 @@ main(int argc, char **argv)
 				err(EXIT_FAILURE, "getgroups() failed");
 		}
 
-		fprintf(stdout, "%u:%u", src_uid, src_gid);
-		if (ngroups > 0) {
-			fprintf(stdout, "+");
-			for (int i = 0; i < ngroups; i++) {
-				if (i > 0)
-					fprintf(stdout, ",");
-				fprintf(stdout, "%u", groups[i]);
-			}
-		}
-		fprintf(stdout, " -> ");
-
-		fprintf(stdout, "%u:%u", wcred.sc_uid, wcred.sc_gid);
+		fprintf(stdout, "uid=%u,gid=%u,", wcred.sc_uid, wcred.sc_gid);
 		if (setcred_flags & SETCREDF_SUPP_GROUPS && wcred.sc_supp_groups_nb > 0) {
-			fprintf(stdout, "+");
+			fprintf(stdout, "+gid=");
 			for (size_t i = 0; i < wcred.sc_supp_groups_nb; i++) {
 				if (i > 0)
 					fprintf(stdout, ",");
