@@ -179,8 +179,8 @@ struct exec_paths {
 };
 
 struct conf {
-	struct rules *rules;
-	struct exec_paths *exec_paths;
+	struct rules rules;
+	struct exec_paths exec_paths;
 	volatile u_int	use_count __aligned(CACHE_LINE_SIZE);
 };
 
@@ -327,9 +327,9 @@ coalesce_id_flags(const flags_t src, flags_t *const dest)
 }
 
 static void
-toast_rules(struct rules *const rules)
+toast_rules(struct rules const rules)
 {
-	struct rulehead *const head = &rules->head;
+	const struct rulehead *head = &rules.head;
 	struct rule *rule, *rule_next;
 
 	STAILQ_FOREACH_SAFE(rule, head, r_entries, rule_next) {
@@ -337,30 +337,29 @@ toast_rules(struct rules *const rules)
 		free(rule->gids, M_MAC_DO);
 		free(rule, M_MAC_DO);
 	}
-	free(rules, M_MAC_DO);
 }
 
-static struct rules *
+static struct rules
 init_rules(void)
 {
-	struct rules *rules;
+	struct rules rules;
 
 	_Static_assert(MAC_RULE_STRING_LEN > 0, "MAC_RULE_STRING_LEN <= 0!");
-	rules = malloc(sizeof(*rules), M_MAC_DO, M_WAITOK | M_ZERO);
-	rules->string[0] = '\0';
-	STAILQ_INIT(&rules->head);
+	bzero(&rules, sizeof(rules));
+	rules.string[0] = '\0';
+	STAILQ_INIT(&rules.head);
 
 	return (rules);
 }
 
-static struct exec_paths *
+static struct exec_paths
 init_exec_paths(void)
 {
-	struct exec_paths *exec_paths;
+	struct exec_paths exec_paths;
 
 	_Static_assert(EXEC_PATHS_MAXLEN > 0, "EXEC_PATHS_MAXLEN <= 0!");
-	exec_paths = malloc(sizeof(*exec_paths), M_MAC_DO, M_WAITOK | M_ZERO);
-	exec_paths->exec_paths_str[0] = 0;
+	bzero(&exec_paths, sizeof(exec_paths));
+	exec_paths.exec_paths_str[0] = 0;
 
 	return (exec_paths);
 }
@@ -370,8 +369,8 @@ alloc_conf(void)
 {
 	struct conf *const conf = malloc(sizeof(*conf), M_MAC_DO, M_WAITOK | M_ZERO);
 
-	conf->rules = NULL;
-	conf->exec_paths = NULL;
+	conf->rules = init_rules();
+	conf->exec_paths = init_exec_paths();
 	conf->use_count = 0;
 
 	return (conf);
@@ -1046,12 +1045,11 @@ einval:
  * - "gid=1010>gid=1011,gid=1012,gid=1013"
  */
 static int
-parse_rules(const char *const string, struct rules **const rulesp,
+parse_rules(const char *const string, struct rules *const rules,
     struct parse_error **const parse_error)
 {
 	const size_t len = strlen(string);
 	char *copy, *p, *rule;
-	struct rules *rules;
 	int error = 0;
 
 	*parse_error = NULL;
@@ -1063,7 +1061,6 @@ parse_rules(const char *const string, struct rules **const rulesp,
 		return (ENAMETOOLONG);
 	}
 
-	rules = init_rules();
 	bcopy(string, rules->string, len + 1);
 	MPASS(rules->string[len] == '\0'); /* Catch some races. */
 
@@ -1078,24 +1075,22 @@ parse_rules(const char *const string, struct rules **const rulesp,
 		error = parse_single_rule(rule, rules, parse_error);
 		if (error != 0) {
 			(*parse_error)->pos += rule - copy;
-			toast_rules(rules);
+			toast_rules(*rules);
 			goto out;
 		}
 	}
 
-	*rulesp = rules;
 out:
 	free(copy, M_MAC_DO);
 	return (error);
 }
 
 static int
-parse_exec_paths(const char *const string, struct exec_paths **const exec_pathsp,
+parse_exec_paths(const char *const string, struct exec_paths *const exec_paths,
 	struct parse_error **const parse_error)
 {
 	const size_t len = strlen(string);
 	char *copy, *p, *path;
-	struct exec_paths *exec_paths;
 	int error = 0;
 
 	*parse_error = NULL;
@@ -1107,7 +1102,6 @@ parse_exec_paths(const char *const string, struct exec_paths **const exec_pathsp
 		return (ENAMETOOLONG);
 	}
 
-	exec_paths = init_exec_paths();
 	bcopy(string, exec_paths->exec_paths_str, len + 1);
 	MPASS(exec_paths->exec_paths_str[len] == '\0');
 
@@ -1146,12 +1140,8 @@ parse_exec_paths(const char *const string, struct exec_paths **const exec_pathsp
 		goto out;
 	}
 
-	*exec_pathsp = exec_paths;
-
 out:
 	free(copy, M_MAC_DO);
-	if (error != 0)
-		free(exec_paths, M_MAC_DO);
 	return (error);
 }
 
@@ -1196,12 +1186,7 @@ static void
 drop_conf(struct conf *const conf)
 {
 	if (refcount_release(&conf->use_count)) {
-		if (conf->rules != NULL) {
-			toast_rules(conf->rules);
-		}
-		if (conf->exec_paths != NULL) {
-			free(conf->exec_paths, M_MAC_DO);
-		}
+		toast_rules(conf->rules);
 		free(conf, M_MAC_DO);
 	}
 }
@@ -1309,11 +1294,9 @@ set_default_conf(struct prison *const pr)
 {
 	struct conf *const conf = alloc_conf();
 
-	conf->rules = init_rules();
-	conf->exec_paths = init_exec_paths();
-	strlcpy(conf->exec_paths->exec_paths_str, "/usr/bin/mdo", EXEC_PATHS_MAXLEN);
-	strlcpy(conf->exec_paths->exec_paths[0], "/usr/bin/mdo", PATH_MAX);
-	conf->exec_paths->exec_path_count = 1;
+	strlcpy(conf->exec_paths.exec_paths_str, "/usr/bin/mdo", EXEC_PATHS_MAXLEN);
+	strlcpy(conf->exec_paths.exec_paths[0], "/usr/bin/mdo", PATH_MAX);
+	conf->exec_paths.exec_path_count = 1;
 
 	set_conf(pr, conf);
 }
@@ -1324,15 +1307,15 @@ set_default_conf(struct prison *const pr)
  * Returns the same error code as parse_rules() (which see).
  */
 
-static struct rules *
+static struct rules
 clone_rules(const struct rules *src)
 {
-	struct rules *dst;
+	struct rules dst;
 	struct rule *src_rule, *dst_rule;
 
-	dst = malloc(sizeof(*dst), M_MAC_DO, M_WAITOK | M_ZERO);
-	strlcpy(dst->string, src->string, sizeof(dst->string));
-	STAILQ_INIT(&dst->head);
+	bzero(&dst, sizeof(dst));
+	strlcpy(dst.string, src->string, sizeof(dst.string));
+	STAILQ_INIT(&dst.head);
 
 	STAILQ_FOREACH(src_rule, &src->head, r_entries) {
 		dst_rule = malloc(sizeof(*dst_rule), M_MAC_DO, M_WAITOK | M_ZERO);
@@ -1343,6 +1326,8 @@ clone_rules(const struct rules *src)
 			    M_MAC_DO, M_WAITOK);
 			bcopy(src_rule->uids, dst_rule->uids,
 			    sizeof(*dst_rule->uids) * src_rule->uids_nb);
+		} else {
+			dst_rule->uids = NULL;
 		}
 
 		if (src_rule->gids_nb > 0) {
@@ -1350,123 +1335,59 @@ clone_rules(const struct rules *src)
 			    M_MAC_DO, M_WAITOK);
 			bcopy(src_rule->gids, dst_rule->gids,
 			    sizeof(*dst_rule->gids) * src_rule->gids_nb);
+		} else {
+			dst_rule->gids = NULL;
 		}
 
-		STAILQ_INSERT_TAIL(&dst->head, dst_rule, r_entries);
+		STAILQ_INSERT_TAIL(&dst.head, dst_rule, r_entries);
 	}
 
-	return dst;
-}
-
-
-
-static struct exec_paths *
-clone_exec_paths(const struct exec_paths *src)
-{
-	struct exec_paths *dst;
-
-	dst = malloc(sizeof(*dst), M_MAC_DO, M_WAITOK);
-	bcopy(src, dst, sizeof(*dst));
 	return (dst);
 }
 
-static struct conf *
-parse_and_set_conf(struct prison *pr, bool rules, bool exec_paths)
+static int 
+parse_and_set_conf(struct prison *pr, const char *rules_string, 
+		const char *exec_paths_string, struct parse_error **parse_error)
 {
 	struct prison *ppr;
-	struct conf *parent = find_conf(pr, &ppr);
-	prison_unlock(ppr);
-
-	if (parent == NULL)
-		return (NULL);
-
-	struct conf *new_conf = alloc_conf();
-
-	if (rules) {
-		new_conf->rules = clone_rules(parent->rules);
-	}
-
-	if (exec_paths) {
-		new_conf->exec_paths = clone_exec_paths(parent->exec_paths);
-	}
-
-	set_conf(pr, new_conf);
-	return new_conf;
-
-/*fail:
-	drop_conf(new_conf);
-	return NULL;*/
-}
-
-static int
-parse_and_set_exec_paths(struct prison *pr, const char *string,
-    struct parse_error **parse_error)
-{
-	struct exec_paths *exec_paths = NULL;
-	struct conf *conf = NULL;
-	int error;
+	struct conf *applicable_conf;
+	struct conf *conf;
+	int error = 0;
 
 	*parse_error = NULL;
 
-	error = parse_exec_paths(string, &exec_paths, parse_error);
-	if (error != 0) {
-		if (exec_paths != NULL) {
-			free(exec_paths, M_MAC_DO);
-		}
-		return (error);
-	}
+	applicable_conf = find_conf(pr, &ppr);
+	hold_conf(applicable_conf);
+	prison_unlock(ppr);
 
-	conf = osd_jail_get(pr, osd_jail_slot);
-	if (conf == NULL) {
-		conf = parse_and_set_conf(pr, true, false);
-		if (conf == NULL) {
-			free(exec_paths, M_MAC_DO);
-			make_parse_error(parse_error, 0,
-			    "Cannot set exec_paths because no rules are inherited");
-			return (EINVAL);
+	if (ppr == pr)
+		conf = applicable_conf;
+	else
+	 	conf = alloc_conf();
+
+	if (rules_string != NULL && rules_string[0] != '\0') {
+		error = parse_rules(rules_string, &conf->rules, parse_error);
+		if (error != 0) {
+			toast_rules(conf->rules);
+			goto out;
 		}
 	}
+	else
+		conf->rules = clone_rules(&applicable_conf->rules);
 
-	if (conf->exec_paths != NULL) {
-		free(conf->exec_paths, M_MAC_DO);
-	}
+	if (exec_paths_string != NULL && exec_paths_string[0] != '\0') {
+		error = parse_exec_paths(exec_paths_string, &conf->exec_paths, parse_error);
+		if (error != 0)
+			goto out;
+	} else
+		conf->exec_paths = applicable_conf->exec_paths;
 
-	conf->exec_paths = exec_paths;
-	return (0);
-}
+	if (ppr != pr)
+		set_conf(pr, conf);
 
-static int
-parse_and_set_rules(struct prison *pr, const char *rules_string,
-    struct parse_error **parse_error)
-{
-	struct rules *rules = NULL;
-	struct conf *conf = NULL;
-	int error;
-
-	error = parse_rules(rules_string, &rules, parse_error);
-	if (error != 0) {
-		if (rules != NULL) {
-			toast_rules(rules);
-		}
-		return (error);
-	}
-
-	conf = osd_jail_get(pr, osd_jail_slot);
-	if (conf == NULL) {
-		conf = parse_and_set_conf(pr, false, true);
-		if (conf == NULL) {
-			toast_rules(rules);
-			make_parse_error(parse_error, 0,
-			    "Cannot set rules: no inherited exec_paths available");
-			return (EINVAL);
-		}
-	}
-
-	if (conf->rules != NULL)
-		toast_rules(conf->rules);
-
-	conf->rules = rules;
-	return (0);
+out:
+	drop_conf(applicable_conf);
+	return (error);
 }
 
 static int
@@ -1480,7 +1401,7 @@ mac_do_sysctl_rules(SYSCTL_HANDLER_ARGS)
 	int error;
 
 	conf = find_conf(td_pr, &pr);
-	strlcpy(buf, conf->rules->string, MAC_RULE_STRING_LEN);
+	strlcpy(buf, conf->rules.string, MAC_RULE_STRING_LEN);
 	prison_unlock(pr);
 
 	error = sysctl_handle_string(oidp, buf, MAC_RULE_STRING_LEN, req);
@@ -1488,13 +1409,14 @@ mac_do_sysctl_rules(SYSCTL_HANDLER_ARGS)
 		goto out;
 
 	/* Set our prison's rules, not that of the jail we inherited from. */
-	error = parse_and_set_rules(td_pr, buf, &parse_error);
+	error = parse_and_set_conf(td_pr, buf, NULL, &parse_error);
 	if (error != 0) {
 		if (print_parse_error)
 			printf("MAC/do: Parse error at index %zu: %s\n",
 			    parse_error->pos, parse_error->msg);
 		free_parse_error(parse_error);
 	}
+
 out:
 	free(buf, M_MAC_DO);
 	return (error);
@@ -1521,14 +1443,14 @@ mac_do_sysctl_exec_paths(SYSCTL_HANDLER_ARGS)
 	int error;
 
 	conf = find_conf(td_pr, &pr);
-	strlcpy(buf, conf->exec_paths->exec_paths_str, EXEC_PATHS_MAXLEN);
+	strlcpy(buf, conf->exec_paths.exec_paths_str, EXEC_PATHS_MAXLEN);
 	prison_unlock(pr);
 
 	error = sysctl_handle_string(oidp, buf, EXEC_PATHS_MAXLEN, req);
 	if (error != 0 || req->newptr == NULL)
 		goto out;
 
-	error = parse_and_set_exec_paths(td_pr, buf, &parse_error);
+	error = parse_and_set_conf(td_pr, NULL, buf, &parse_error);
 	if (error != 0) {
 		if (print_parse_error)
 			printf("MAC/do: Parse error at index %zu: %s\n",
@@ -1549,14 +1471,8 @@ static int
 mac_do_jail_create(void *obj, void *data)
 {
 	struct prison *const pr = obj;
-	struct vfsoptlist *opts = data;
-	int rules_err, execs_err;
 
-	vfs_getopts(opts, "mac.do.rules", &rules_err);
-	vfs_getopts(opts, "mac.do.exec_paths", &execs_err);
-
-	if (rules_err == ENOENT && execs_err == ENOENT)
-		set_default_conf(pr);
+	set_default_conf(pr);
 
 	return (0);
 }
@@ -1566,9 +1482,9 @@ mac_do_jail_get(void *obj, void *data)
 {
 	struct prison *ppr, *const pr = obj;
 	struct vfsoptlist *const opts = data;
-	struct rules *rules;
+	struct rules rules;
 	struct conf *conf;
-	struct exec_paths *exec_paths;
+	struct exec_paths exec_paths;
 	int jsys, error;
 
 	conf = find_conf(pr, &ppr);
@@ -1576,17 +1492,17 @@ mac_do_jail_get(void *obj, void *data)
 	exec_paths = conf->exec_paths;
 
 	jsys = pr == ppr ?
-	    (STAILQ_EMPTY(&rules->head) ? JAIL_SYS_DISABLE : JAIL_SYS_NEW) :
+	    (STAILQ_EMPTY(&rules.head) ? JAIL_SYS_DISABLE : JAIL_SYS_NEW) :
 	    JAIL_SYS_INHERIT;
 	error = vfs_setopt(opts, "mac.do", &jsys, sizeof(jsys));
 	if (error != 0 && error != ENOENT)
 		goto done;
 
-	error = vfs_setopts(opts, "mac.do.rules", rules->string);
+	error = vfs_setopts(opts, "mac.do.rules", rules.string);
 	if (error != 0 && error != ENOENT)
 		goto done;
 
-	error = vfs_setopts(opts, "mac.do.exec_paths", exec_paths->exec_paths_str);
+	error = vfs_setopts(opts, "mac.do.exec_paths", exec_paths.exec_paths_str);
 	if (error != 0 && error != ENOENT)
 		goto done;
 
@@ -1650,7 +1566,7 @@ mac_do_jail_check(void *obj, void *data)
 		}
 	}
 
-	/* Handle exec_paths input */
+	/* Handle 'exec_paths' input */
 	error = vfs_getopt(opts, "mac.do.exec_paths", (void **)&exec_paths_string, &exec_paths_len);
 	if (error == ENOENT)
 		exec_paths_string = NULL;
@@ -1674,15 +1590,15 @@ mac_do_jail_check(void *obj, void *data)
 	has_rules = rules_string && rules_string[0] != '\0';
 	has_exec_paths = exec_paths_string && exec_paths_string[0] != '\0';
 
-	/* Infer jsys if needed */
+	/* Infer 'jsys' if needed */
 	if (jsys == -1) {
-		if (has_rules)
+		if (has_rules || has_exec_paths)
 			jsys = JAIL_SYS_NEW;
 		else
 			jsys = JAIL_SYS_DISABLE;
 	}
 
-	/* Final checks based on resolved jsys */
+	/* Final checks based on resolved 'jsys' */
 	switch (jsys) {
 	case JAIL_SYS_DISABLE:
 	case JAIL_SYS_INHERIT:
@@ -1718,9 +1634,10 @@ mac_do_jail_set(void *obj, void *data)
 	struct vfsoptlist *opts = data;
 	char *rules_string, *exec_paths_string;
 	struct parse_error *parse_error = NULL;
-	struct conf *new_conf = NULL, *parent_conf;
+	struct conf *new_conf = NULL, *applicable_conf;
 	int error, jsys;
 	bool has_rules, has_exec_paths;
+	bool held_applicable = false;
 
 	/*
 	 * The invariants checks used below correspond to what has already been
@@ -1741,7 +1658,7 @@ mac_do_jail_set(void *obj, void *data)
 	has_exec_paths = (exec_paths_string != NULL && exec_paths_string[0] != '\0');
 
 	if (jsys == -1) {
-		if (has_rules)
+		if (has_rules || has_exec_paths)
 			jsys = JAIL_SYS_NEW;
 		else
 			jsys = JAIL_SYS_DISABLE;
@@ -1753,40 +1670,54 @@ mac_do_jail_set(void *obj, void *data)
 		return (0);
 
 	case JAIL_SYS_DISABLE:
+		rules_string = "";
+		has_rules = true;
 		return (0);
 
 	case JAIL_SYS_NEW:
-		parent_conf = find_conf(curproc->p_ucred->cr_prison, &p);
+		if (has_rules && has_exec_paths) {
+			new_conf = alloc_conf();
+
+			error = parse_rules(rules_string, &new_conf->rules, &parse_error);
+			if (error != 0)
+				goto fail;
+
+			error = parse_exec_paths(exec_paths_string, &new_conf->exec_paths, &parse_error);
+			if (error != 0)
+				goto fail;
+
+			set_conf(pr, new_conf);
+			return (0);
+		}
+
+		applicable_conf = find_conf(curproc->p_ucred->cr_prison, &p);
+		hold_conf(applicable_conf);
+		held_applicable = true;
 		prison_unlock(p);
+
 		new_conf = alloc_conf();
 
 		if (has_rules) {
 			error = parse_rules(rules_string, &new_conf->rules, &parse_error);
 			if (error != 0)
 				goto fail;
-		} else if (parent_conf && parent_conf->rules) {
-			new_conf->rules = clone_rules(parent_conf->rules);
-		} else {
-			make_parse_error(&parse_error, 0,
-			    "mac.do.rules not specified and no inherited rules found");
-			error = EINVAL;
-			goto fail;
-		}
+		} else
+			new_conf->rules = clone_rules(&applicable_conf->rules);
 
 		if (has_exec_paths) {
 			error = parse_exec_paths(exec_paths_string, &new_conf->exec_paths, &parse_error);
 			if (error != 0)
 				goto fail;
-		} else if (parent_conf && parent_conf->exec_paths) {
-			new_conf->exec_paths = clone_exec_paths(parent_conf->exec_paths);
-		} else {
-			new_conf->exec_paths = malloc(sizeof(*new_conf->exec_paths), M_MAC_DO, M_WAITOK | M_ZERO);
-			strlcpy(new_conf->exec_paths->exec_paths_str, "/usr/bin/mdo", EXEC_PATHS_MAXLEN);
-			strlcpy(new_conf->exec_paths->exec_paths[0], "/usr/bin/mdo", PATH_MAX);
-			new_conf->exec_paths->exec_path_count = 1;
-		}
+		} else
+			new_conf->exec_paths = applicable_conf->exec_paths;
 
 		set_conf(pr, new_conf);
+
+		if (held_applicable) {
+			drop_conf(applicable_conf);
+			held_applicable = false;
+		}
+
 		return (0);
 
 	default:
@@ -1801,10 +1732,10 @@ fail:
 	}
 	if (new_conf != NULL)
 		drop_conf(new_conf);
+	if (held_applicable)
+		drop_conf(applicable_conf);
 	return (error);
 }
-
-
 
 /*
  * OSD jail methods.
@@ -2280,7 +2211,7 @@ static int
 mac_do_priv_grant(struct ucred *cred, int priv)
 {
 	struct mac_do_setcred_data *const data = fetch_data();
-	const struct rules *rules;
+	struct rules rules;
 	const struct ucred *new_cred;
 	const struct rule *rule;
 	u_int setcred_flags;
@@ -2321,7 +2252,7 @@ mac_do_priv_grant(struct ucred *cred, int priv)
 	 * privilege granting functions interpreting the "to"/"target" part.
 	 */
 	error = EPERM;
-	STAILQ_FOREACH(rule, &rules->head, r_entries)
+	STAILQ_FOREACH(rule, &rules.head, r_entries)
 	    if (rule_applies(rule, cred)) {
 		    error = rule_grant_setcred(rule, cred, new_cred);
 		    if (error != EPERM)
@@ -2355,22 +2286,23 @@ check_proc(void)
 		return (EPERM);
 
 	struct conf *conf;
-	struct exec_paths *exec_paths;
+	struct exec_paths exec_paths;
 	struct prison *td_pr = curproc->p_ucred->cr_prison;
 	struct prison *pr;
 	conf = find_conf(td_pr, &pr);
 	exec_paths = conf->exec_paths;
 
-	if (exec_paths->exec_path_count > 0) {
-		for (int i = 0; i < exec_paths->exec_path_count; i++) {
-			if (strcmp(exec_paths->exec_paths[i], path) == 0) {
+	if (exec_paths.exec_path_count > 0) {
+		for (int i = 0; i < exec_paths.exec_path_count; i++) {
+			if (strcmp(exec_paths.exec_paths[i], path) == 0) {
 				error = 0;
 				break;
 			}
 		}
 
-		prison_unlock(pr);
 	}
+
+	prison_unlock(pr);
 
 	free(to_free, M_TEMP);
 	return (error);
