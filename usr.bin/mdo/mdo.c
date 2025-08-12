@@ -29,6 +29,7 @@ usage(void)
 		"  -u <user>       Target user (name or UID)\n"
 		"  -i              Only change UID, skip groups\n"
 		"  -g <group>      Override primary group (name or GID)\n"
+		"  -k              Keep current user, only change groups\n"
 		"  -G <g1,g2,...>  Set supplementary groups (name or GID list)\n"
 		"  -s <mods>       Modify supplementary groups using:\n"
 		"                   +group to add, -group to remove, @ to reset\n"
@@ -57,12 +58,13 @@ static uid_t
 parse_uid(const char *s)
 {
 	struct passwd *pw = getpwnam(s);
-	
+	uid_t uid;
+	const char *errp;
+
 	if (pw != NULL)
 		return pw->pw_uid;
 
-	const char *errp;
-	uid_t uid = strtonum(s, 0 , UID_MAX, &errp);
+	uid = strtonum(s, 0 , UID_MAX, &errp);
 	if (errp != NULL)
 		errx(EXIT_FAILURE, "invalid UID '%s': %s", s, errp);
 
@@ -73,11 +75,13 @@ static gid_t
 parse_gid(const char *s)
 {
 	struct group *gr = getgrnam(s);
+	gid_t gid;
+	const char *errp;
+
 	if (gr != NULL)
 		return gr->gr_gid;
 
-	const char *errp;
-	gid_t gid = strtonum(s, 0, GID_MAX, &errp);
+	gid = strtonum(s, 0, GID_MAX, &errp);
 	if (errp != NULL)
 		errx(EXIT_FAILURE, "invalid GID '%s': %s", s, errp);
 
@@ -95,6 +99,7 @@ main(int argc, char **argv)
 	struct setcred wcred = SETCRED_INITIALIZER;
 	u_int setcred_flags = 0;
 	bool uidonly = false;
+	bool keepuser = false;
 	int ch;
 
 	gid_t gid = -1;
@@ -120,13 +125,16 @@ main(int argc, char **argv)
 		{NULL, 0, NULL, 0}
 	};
 
-	while ((ch = getopt_long(argc, argv, "+u:ig:G:s:rh", longopts, NULL)) != -1) {
+	while ((ch = getopt_long(argc, argv, "+u:ikg:G:s:rh", longopts, NULL)) != -1) {
 		switch (ch) {
 		case 'u':
 			username = optarg;
 			break;
 		case 'i':
 			uidonly = true;
+			break;
+		case 'k':
+			keepuser = true;
 			break;
 		case 'g':
 			primary_group = optarg;
@@ -168,41 +176,48 @@ main(int argc, char **argv)
 	argc -= optind;
 	argv += optind;
 
-	if (username) {
-		if (strspn(username, "0123456789") == strlen(username)) {
-			const char *errp = NULL;
-			uid_t uid = strtonum(username, 0, UID_MAX, &errp);
-			if (errp != NULL)
-				err(EXIT_FAILURE, "invalid user ID '%s'", username);
+	if (!keepuser) {
+		if (username) {
+			if (strspn(username, "0123456789") == strlen(username)) {
+				const char *errp = NULL;
+				uid_t uid = strtonum(username, 0, UID_MAX, &errp);
 
-			if (primary_group == NULL)
-				errx(EXIT_FAILURE, "must specify -g when using a numeric UID");
+				if (errp != NULL)
+					err(EXIT_FAILURE, "invalid user ID '%s'", username);
 
-			wcred.sc_uid = wcred.sc_ruid = wcred.sc_svuid = uid;
-			setcred_flags |= SETCREDF_UID | SETCREDF_RUID | SETCREDF_SVUID;
-			pw = NULL;
-		} else {
-			pw = getpwnam(username);
-			if (pw == NULL)
-				err(EXIT_FAILURE, "invalid username '%s'", username);
+				if (primary_group == NULL)
+					errx(EXIT_FAILURE, "must specify -g when using a numeric UID");
 
-			wcred.sc_uid = wcred.sc_ruid = wcred.sc_svuid = pw->pw_uid;
-			setcred_flags |= SETCREDF_UID | SETCREDF_RUID | SETCREDF_SVUID;
+				wcred.sc_uid = wcred.sc_ruid = wcred.sc_svuid = uid;
+				setcred_flags |= SETCREDF_UID | SETCREDF_RUID | SETCREDF_SVUID;
+				pw = NULL;
+			} else {
+				pw = getpwnam(username);
+				if (pw == NULL)
+					err(EXIT_FAILURE, "invalid username '%s'", username);
+
+				wcred.sc_uid = wcred.sc_ruid = wcred.sc_svuid = pw->pw_uid;
+				setcred_flags |= SETCREDF_UID | SETCREDF_RUID | SETCREDF_SVUID;
+			}
 		}
-	}
 
 
-	if (ruid_str != NULL) {
-		wcred.sc_ruid = parse_uid(ruid_str);
-		setcred_flags |= SETCREDF_RUID;
-	}
-	if (svuid_str != NULL) {
-		wcred.sc_svuid = parse_uid(svuid_str);
-		setcred_flags |= SETCREDF_SVUID;
-	}
-	if (euid_str != NULL) {
-		wcred.sc_uid = parse_uid(euid_str);
-		setcred_flags |= SETCREDF_UID;
+		if (ruid_str != NULL) {
+			wcred.sc_ruid = parse_uid(ruid_str);
+			setcred_flags |= SETCREDF_RUID;
+		}
+		if (svuid_str != NULL) {
+			wcred.sc_svuid = parse_uid(svuid_str);
+			setcred_flags |= SETCREDF_SVUID;
+		}
+		if (euid_str != NULL) {
+			wcred.sc_uid = parse_uid(euid_str);
+			setcred_flags |= SETCREDF_UID;
+		}
+	} else {
+		pw = getpwuid(geteuid());
+		if (pw == NULL)
+			err(EXIT_FAILURE, "cannot determine current user");
 	}
 
 	if (primary_group != NULL) {
@@ -242,10 +257,11 @@ main(int argc, char **argv)
 			err(EXIT_FAILURE, "strdup failed");
 
 		while ((tok = strsep(&p, ",")) != NULL) {
+			gid_t g;
 			if (*tok == '\0')
 				continue;
 
-			gid_t g = parse_gid(tok);
+			g = parse_gid(tok);
 			supp_add = realloc(supp_add, sizeof(gid_t) * (add_count + 1));
 			if (supp_add == NULL)
 				err(EXIT_FAILURE, "realloc failed");
@@ -318,6 +334,8 @@ main(int argc, char **argv)
 		size_t final_count = 0;
 		gid_t *base = NULL;
 		int base_count = 0;
+		const long max = sysconf(_SC_NGROUPS_MAX) + 2;
+
 		/*
 		 * If there are too many groups specified for some UID, setting
 		 * the groups will fail.  We preserve this condition by
@@ -326,8 +344,6 @@ main(int argc, char **argv)
 		 * doesn't (and shouldn't) check the limit, and to allow
 		 * setcred() to actually check for overflow.
 		 */
-
-		const long max = sysconf(_SC_NGROUPS_MAX) + 2;
 		base = malloc(sizeof(*base) * max);
 		if (base == NULL)
 			err(EXIT_FAILURE, "malloc failed");
