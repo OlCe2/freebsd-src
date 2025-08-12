@@ -93,6 +93,7 @@ main(int argc, char **argv)
 {
 	struct passwd *pw = NULL;
 	const char *username = "root";
+	bool username_provided = false;
 	const char *primary_group = NULL;
 	const char *supp_groups_str = NULL;
 	const char *group_mod_str = NULL;
@@ -104,6 +105,7 @@ main(int argc, char **argv)
 
 	gid_t gid = -1;
 	bool override_gid = false;
+	bool explicituid = false;
 
 	bool supp_reset = false;
 	gid_t *supp_add = NULL, *supp_rem = NULL;
@@ -129,6 +131,7 @@ main(int argc, char **argv)
 		switch (ch) {
 		case 'u':
 			username = optarg;
+			username_provided = true;
 			break;
 		case 'i':
 			uidonly = true;
@@ -177,7 +180,7 @@ main(int argc, char **argv)
 	argv += optind;
 
 	if (!keepuser) {
-		if (username) {
+		if (username_provided) {
 			if (strspn(username, "0123456789") == strlen(username)) {
 				const char *errp = NULL;
 				uid_t uid = strtonum(username, 0, UID_MAX, &errp);
@@ -201,7 +204,6 @@ main(int argc, char **argv)
 			}
 		}
 
-
 		if (ruid_str != NULL) {
 			wcred.sc_ruid = parse_uid(ruid_str);
 			setcred_flags |= SETCREDF_RUID;
@@ -220,17 +222,23 @@ main(int argc, char **argv)
 			err(EXIT_FAILURE, "cannot determine current user");
 	}
 
+	if (keepuser && (ruid_str != NULL || svuid_str != NULL || euid_str != NULL))
+		errx(EXIT_FAILURE, "-k and --ruid/--svuid/--euid cannot be used together");
+
 	if (primary_group != NULL) {
 		gid = parse_gid(primary_group);
 		override_gid = true;
 	} else if (pw != NULL && !uidonly) {
 		gid = pw->pw_gid;
 		override_gid = true;
+	} else if (ruid_str != NULL || svuid_str != NULL || euid_str != NULL) {
+		gid = getegid();
+		explicituid = true;
 	} else {
 		errx(EXIT_FAILURE, "must specify -g or have a user entry to determine GID");
 	}
 
-	if (override_gid) {
+	if (override_gid || explicituid) {
 		wcred.sc_gid = wcred.sc_rgid = wcred.sc_svgid = gid;
 		setcred_flags |= SETCREDF_GID | SETCREDF_RGID | SETCREDF_SVGID;
 	}
