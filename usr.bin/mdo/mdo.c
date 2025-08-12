@@ -312,10 +312,12 @@ main(int argc, char **argv)
 		wcred.sc_supp_groups = final;
 		wcred.sc_supp_groups_nb = final_count;
 		setcred_flags |= SETCREDF_SUPP_GROUPS;
-	} else if (!uidonly && pw != NULL) {
-		gid_t *base;
-		long max;
-		int base_count;
+	} else if (supp_add != NULL || supp_rem != NULL || (!uidonly && pw != NULL)) {
+		size_t alloc;
+		gid_t *final;
+		size_t final_count = 0;
+		gid_t *base = NULL;
+		int base_count = 0;
 		/*
 		 * If there are too many groups specified for some UID, setting
 		 * the groups will fail.  We preserve this condition by
@@ -325,30 +327,19 @@ main(int argc, char **argv)
 		 * setcred() to actually check for overflow.
 		 */
 
-		max = sysconf(_SC_NGROUPS_MAX) + 2;
+		const long max = sysconf(_SC_NGROUPS_MAX) + 2;
 		base = malloc(sizeof(*base) * max);
 		if (base == NULL)
 			err(EXIT_FAILURE, "malloc failed");
 		base_count = max;
 		getgrouplist(pw->pw_name, pw->pw_gid, base, &base_count);
-
-		supp_add = base;
-		add_count = base_count;
-	}
-	else if (supp_add != NULL || supp_rem != NULL) {
-		size_t alloc;
-		gid_t *final;
-		size_t final_count = 0;
-		//gid_t *base = NULL;
-		int base_count = 0;
-
 		alloc = base_count + add_count + rem_count + 4;
 		final = malloc(sizeof(gid_t) * alloc);
 
 		if (final == NULL)
 			err(EXIT_FAILURE, "malloc failed");
 
-		/*for (int i = 0; i < base_count; ++i) {
+		for (int i = 0; i < base_count; ++i) {
 			bool skip = false;
 			for (size_t j = 0; j < rem_count; ++j) {
 				if (base[i] == supp_rem[j]) {
@@ -365,7 +356,7 @@ main(int argc, char **argv)
 			}
 			if (!skip)
 				final[final_count++] = base[i];
-		}*/
+		}
 
 		for (size_t i = 0; i < add_count; ++i) {
 			bool exists = false;
