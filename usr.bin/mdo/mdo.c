@@ -39,6 +39,7 @@ usage(void)
 		"  --euid <uid>       Set effective UID\n"
 		"  --rgid <gid>       Set real GID\n"
 		"  --svgid <gid>      Set saved GID\n"
+		"  --egid <gid>       Set effective GID\n"
 		"\n"
 		"  --print-rule/-r    Print the actual rules of transition in mac.do.rules format\n"
 		"  -h              	  Show this help message\n"
@@ -47,7 +48,7 @@ usage(void)
 		"  mdo -u alice id\n"
 		"  mdo -u 1001 -g wheel -G staff,operator /bin/sh\n"
 		"  mdo -u bob -s @,+wheel,+operator /usr/bin/id\n"
-		"  mdo -E 1002 -R 1003 -U 1004 /bin/id\n"
+		"  mdo --ruid 1002 -svgid 1003 -egid 1004 /bin/id\n"
 	);
 	exit(1);
 }
@@ -62,7 +63,7 @@ parse_uid(const char *s)
 
 	const char *errp;
 	uid_t uid = strtonum(s, 0 , UID_MAX, &errp);
-	if (errp)
+	if (errp != NULL)
 		errx(EXIT_FAILURE, "invalid UID '%s': %s", s, errp);
 
 	return uid;
@@ -77,6 +78,8 @@ parse_gid(const char *s)
 
 	const char *errp;
 	gid_t gid = strtonum(s, 0, GID_MAX, &errp);
+	if (errp != NULL)
+		errx(EXIT_FAILURE, "invalid GID '%s': %s", s, errp);
 
 	return gid;
 }
@@ -102,7 +105,7 @@ main(int argc, char **argv)
 	size_t add_count = 0, rem_count = 0;
 
 	const char *ruid_str = NULL, *svuid_str = NULL, *euid_str = NULL;
-	char *rgid_str = NULL, *svgid_str = NULL;
+	const char *rgid_str = NULL, *svgid_str = NULL, *egid_str = NULL;
 
 	bool print_rule = false;
 
@@ -112,11 +115,12 @@ main(int argc, char **argv)
 		{"euid", required_argument, NULL, 1002},
 		{"rgid", required_argument, NULL, 1003},
 		{"svgid", required_argument, NULL, 1004},
+		{"egid", required_argument, NULL, 1005},
 		{"print-rule", no_argument, NULL, 'r'},
 		{NULL, 0, NULL, 0}
 	};
 
-	while ((ch = getopt_long(argc, argv, "u:ig:G:s:rh", longopts, NULL)) != -1) {
+	while ((ch = getopt_long(argc, argv, "+u:ig:G:s:rh", longopts, NULL)) != -1) {
 		switch (ch) {
 		case 'u':
 			username = optarg;
@@ -148,6 +152,9 @@ main(int argc, char **argv)
 		case 1004:
 			svgid_str = optarg;
 			break;
+		case 1005:
+			egid_str = optarg;
+			break;
 		case 'r':
 			print_rule = true;
 			break;
@@ -162,21 +169,28 @@ main(int argc, char **argv)
 	argv += optind;
 
 	if (username) {
-		if ((pw = getpwnam(username)) == NULL) {
-			if (strspn(username, "0123456789") == strlen(username)) {
-				const char *errp = NULL;
-				uid_t uid = strtonum(username, 0, UID_MAX, &errp);
-				if (errp != NULL)
-					err(EXIT_FAILURE, "invalid user ID '%s'", username);
-				pw = getpwuid(uid);
-			}
+		if (strspn(username, "0123456789") == strlen(username)) {
+			const char *errp = NULL;
+			uid_t uid = strtonum(username, 0, UID_MAX, &errp);
+			if (errp != NULL)
+				err(EXIT_FAILURE, "invalid user ID '%s'", username);
+
+			if (primary_group == NULL)
+				errx(EXIT_FAILURE, "must specify -g when using a numeric UID");
+
+			wcred.sc_uid = wcred.sc_ruid = wcred.sc_svuid = uid;
+			setcred_flags |= SETCREDF_UID | SETCREDF_RUID | SETCREDF_SVUID;
+			pw = NULL;
+		} else {
+			pw = getpwnam(username);
 			if (pw == NULL)
 				err(EXIT_FAILURE, "invalid username '%s'", username);
+
+			wcred.sc_uid = wcred.sc_ruid = wcred.sc_svuid = pw->pw_uid;
+			setcred_flags |= SETCREDF_UID | SETCREDF_RUID | SETCREDF_SVUID;
 		}
 	}
 
-	wcred.sc_uid = wcred.sc_ruid = wcred.sc_svuid = pw->pw_uid;
-	setcred_flags |= SETCREDF_UID | SETCREDF_RUID | SETCREDF_SVUID;
 
 	if (ruid_str != NULL) {
 		wcred.sc_ruid = parse_uid(ruid_str);
@@ -190,6 +204,22 @@ main(int argc, char **argv)
 		wcred.sc_uid = parse_uid(euid_str);
 		setcred_flags |= SETCREDF_UID;
 	}
+
+	if (primary_group != NULL) {
+		gid = parse_gid(primary_group);
+		override_gid = true;
+	} else if (pw != NULL && !uidonly) {
+		gid = pw->pw_gid;
+		override_gid = true;
+	} else {
+		errx(EXIT_FAILURE, "must specify -g or have a user entry to determine GID");
+	}
+
+	if (override_gid) {
+		wcred.sc_gid = wcred.sc_rgid = wcred.sc_svgid = gid;
+		setcred_flags |= SETCREDF_GID | SETCREDF_RGID | SETCREDF_SVGID;
+	}
+
 	if (rgid_str != NULL) {
 		wcred.sc_rgid = parse_gid(rgid_str);
 		setcred_flags |= SETCREDF_RGID;
@@ -198,46 +228,47 @@ main(int argc, char **argv)
 		wcred.sc_svgid = parse_gid(svgid_str);
 		setcred_flags |= SETCREDF_SVGID;
 	}
-
-	if (primary_group != NULL) {
-		gid = parse_gid(primary_group);
-		override_gid = true;
-	} else if (pw != NULL && !uidonly) {
-		gid = pw->pw_gid;
-		override_gid = true;
+	if (egid_str != NULL) {
+		wcred.sc_gid = parse_gid(egid_str);
+		setcred_flags |= SETCREDF_GID;
 	}
-
-	if (override_gid) {
-		wcred.sc_gid = wcred.sc_rgid = wcred.sc_svgid = gid;
-		setcred_flags |= SETCREDF_GID | SETCREDF_RGID | SETCREDF_SVGID;
-	}
-
+	
 	if (supp_groups_str != NULL) {
-		char *copy = strdup(supp_groups_str);
-		if (copy == NULL)
+		char *s = strdup(supp_groups_str);
+		char *p = s;
+		char *tok;
+
+		if (s == NULL)
 			err(EXIT_FAILURE, "strdup failed");
-		char *tok = strtok(copy, ",");
-		while (tok != NULL) {
+
+		while ((tok = strsep(&p, ",")) != NULL) {
+			if (*tok == '\0')
+				continue;
+
 			gid_t g = parse_gid(tok);
 			supp_add = realloc(supp_add, sizeof(gid_t) * (add_count + 1));
 			if (supp_add == NULL)
 				err(EXIT_FAILURE, "realloc failed");
 			supp_add[add_count++] = g;
-			tok = strtok(NULL, ",");
 		}
-		free(copy);
+		free(s);
 		supp_reset = true;
 	}
 
 	if (group_mod_str != NULL) {
 		int i = 0;
 		char *s = strdup(group_mod_str);
+		char *p = s;
+		char *tok;
+
 		if (s == NULL)
 			err(EXIT_FAILURE, "strdup failed");
 
-		char *tok = strtok(s, ",");
-		while (tok != NULL) {
-			if (strcmp(tok, "@") == 0) {
+		while ((tok = strsep(&p, ",")) != NULL) {
+			if (*tok == '\0')
+				continue;
+
+			if (tok[0] == '@')  {
 				if (i > 0)
 					errx(EXIT_FAILURE, "'@' must be the first token in -s option");
 				supp_reset = true;
@@ -247,19 +278,18 @@ main(int argc, char **argv)
 				gid = parse_gid(gstr);
 				if (is_add) {
 					supp_add = realloc(supp_add, sizeof(gid_t) * (add_count + 1));
-					if (!supp_add)
+					if (supp_add == NULL)
 						err(EXIT_FAILURE, "realloc failed");
 					supp_add[add_count++] = gid;
 				} else {
 					supp_rem = realloc(supp_rem, sizeof(gid_t) * (rem_count + 1));
-					if (!supp_rem)
+					if (supp_rem == NULL)
 						err(EXIT_FAILURE, "realloc failed");
 					supp_rem[rem_count++] = gid;
 				}
 			} else {
 				errx(EXIT_FAILURE, "invalid -s entry '%s'", tok);
 			}
-			tok = strtok(NULL, ",");
 			i++;
 		}
 		free(s);
@@ -282,13 +312,10 @@ main(int argc, char **argv)
 		wcred.sc_supp_groups = final;
 		wcred.sc_supp_groups_nb = final_count;
 		setcred_flags |= SETCREDF_SUPP_GROUPS;
-	} else if (group_mod_str != NULL || supp_add != NULL || supp_rem != NULL || (!uidonly && pw != NULL)) {
-		gid_t *base = NULL;
-		int base_count = 0;
-		size_t alloc;
-		gid_t *final;
-		size_t final_count = 0;
-
+	} else if (!uidonly && pw != NULL) {
+		gid_t *base;
+		long max;
+		int base_count;
 		/*
 		 * If there are too many groups specified for some UID, setting
 		 * the groups will fail.  We preserve this condition by
@@ -297,14 +324,23 @@ main(int argc, char **argv)
 		 * doesn't (and shouldn't) check the limit, and to allow
 		 * setcred() to actually check for overflow.
 		 */
-		if (pw != NULL) {
-			const long max = sysconf(_SC_NGROUPS_MAX) + 2;
-			base = malloc(sizeof(*base) * max);
-			if (!base)
-				err(EXIT_FAILURE, "malloc failed");
-			base_count = max;
-			getgrouplist(pw->pw_name, pw->pw_gid, base, &base_count);
-		}
+
+		max = sysconf(_SC_NGROUPS_MAX) + 2;
+		base = malloc(sizeof(*base) * max);
+		if (base == NULL)
+			err(EXIT_FAILURE, "malloc failed");
+		base_count = max;
+		getgrouplist(pw->pw_name, pw->pw_gid, base, &base_count);
+
+		supp_add = base;
+		add_count = base_count;
+	}
+	else if (supp_add != NULL || supp_rem != NULL) {
+		size_t alloc;
+		gid_t *final;
+		size_t final_count = 0;
+		//gid_t *base = NULL;
+		int base_count = 0;
 
 		alloc = base_count + add_count + rem_count + 4;
 		final = malloc(sizeof(gid_t) * alloc);
@@ -312,7 +348,7 @@ main(int argc, char **argv)
 		if (final == NULL)
 			err(EXIT_FAILURE, "malloc failed");
 
-		for (int i = 0; i < base_count; ++i) {
+		/*for (int i = 0; i < base_count; ++i) {
 			bool skip = false;
 			for (size_t j = 0; j < rem_count; ++j) {
 				if (base[i] == supp_rem[j]) {
@@ -329,7 +365,7 @@ main(int argc, char **argv)
 			}
 			if (!skip)
 				final[final_count++] = base[i];
-		}
+		}*/
 
 		for (size_t i = 0; i < add_count; ++i) {
 			bool exists = false;
