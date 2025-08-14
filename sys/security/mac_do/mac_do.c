@@ -1139,7 +1139,7 @@ out:
 /*
  * Find conf applicable to the passed prison.
  *
- * Returns the applicable rules (and never NULL).  'pr' must be unlocked.
+ * Returns the applicable conf (and never NULL).  'pr' must be unlocked.
  * 'aprp' is set to the (ancestor) prison holding these, and it must be unlocked
  * once the caller is done accessing the conf.  '*aprp' is equal to 'pr' if and
  * only if the current jail has its own set of conf.
@@ -1465,9 +1465,13 @@ out:
 	return (error);
 }
 
-SYSCTL_PROC(_security_mac_do, OID_AUTO, exec_paths, CTLTYPE_STRING | CTLFLAG_RW | CTLFLAG_PRISON | CTLFLAG_MPSAFE, 0, 0, mac_do_sysctl_exec_paths, "A", "Colon-separated list of allowed executables");
+SYSCTL_PROC(_security_mac_do, OID_AUTO, exec_paths,
+		CTLTYPE_STRING | CTLFLAG_RW | CTLFLAG_PRISON | CTLFLAG_MPSAFE,
+		0, 0, mac_do_sysctl_exec_paths, "A",
+		"Colon-separated list of allowed executables");
 
-SYSCTL_JAIL_PARAM_STRING(_mac_do, exec_paths, CTLFLAG_RW, EXEC_PATHS_MAXLEN, "Jail MAC/do executable paths");
+SYSCTL_JAIL_PARAM_STRING(_mac_do, exec_paths, CTLFLAG_RW, EXEC_PATHS_MAXLEN, 
+		"Jail MAC/do executable paths");
 
 static int
 mac_do_jail_create(void *obj, void *data)
@@ -1534,7 +1538,7 @@ mac_do_jail_check(void *obj, void *data)
 	int error, jsys, rules_len = 0, exec_paths_len = 0;
 	bool has_rules, has_exec_paths;
 
-	/* Read mac.do = -1 if unset */
+	/* Mark unspecified */
 	error = vfs_copyopt(opts, "mac.do", &jsys, sizeof(jsys));
 	if (error == ENOENT)
 		jsys = -1;
@@ -1586,7 +1590,8 @@ mac_do_jail_check(void *obj, void *data)
 	}
 
 	/*
-	 * Be liberal, considering that an empty rule or exec paths specification is equivalent to no specification.
+	 * Be liberal, considering that an empty rule or exec paths specification 
+	 * is equivalent to no specification.
 	 * This affects the JAIL_SYS_DISABLE and JAIL_SYS_INHERIT sanity checks below.
 	 */
 	has_rules = rules_string && rules_string[0] != '\0';
