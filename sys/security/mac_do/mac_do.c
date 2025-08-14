@@ -1298,15 +1298,14 @@ set_default_conf(struct prison *const pr)
  * Returns the same error code as parse_rules() (which see).
  */
 
-static struct rules
-clone_rules(const struct rules *src)
+static void
+clone_rules(struct rules *dst, struct rules *const src)
 {
-	struct rules dst;
 	struct rule *src_rule, *dst_rule;
 
-	bzero(&dst, sizeof(dst));
-	strlcpy(dst.string, src->string, sizeof(dst.string));
-	STAILQ_INIT(&dst.head);
+	bzero(dst, sizeof(*dst));
+	strlcpy(dst->string, src->string, sizeof(dst->string));
+	STAILQ_INIT(&dst->head);
 
 	STAILQ_FOREACH(src_rule, &src->head, r_entries) {
 		dst_rule = malloc(sizeof(*dst_rule), M_MAC_DO, M_WAITOK | M_ZERO);
@@ -1326,41 +1325,30 @@ clone_rules(const struct rules *src)
 			    sizeof(*dst_rule->gids) * src_rule->gids_nb);
 		}
 
-		STAILQ_INSERT_TAIL(&dst.head, dst_rule, r_entries);
+		STAILQ_INSERT_TAIL(&dst->head, dst_rule, r_entries);
 	}
-
-	return (dst);
 }
 
-static struct conf *
-clone_conf(struct conf *const src)
+static void
+clone_exec_paths(struct exec_paths *dst, struct exec_paths *const src)
 {
-	struct conf *dst;
-
-	dst = alloc_conf();
-	
-	dst->rules = clone_rules(&src->rules);
-
-	dst->exec_paths.exec_path_count = src->exec_paths.exec_path_count;
-	for (int i = 0; i < src->exec_paths.exec_path_count; i++) {
-		strlcpy(dst->exec_paths.exec_paths[i],
-				src->exec_paths.exec_paths[i],
-				sizeof(dst->exec_paths.exec_paths[i]));
+	bzero(dst, sizeof(*dst));
+	dst->exec_path_count = src->exec_path_count;
+	for (int i = 0; i < src->exec_path_count; i++) {
+		strlcpy(dst->exec_paths[i], src->exec_paths[i],
+				sizeof(dst->exec_paths[i]));
 	}
 
-	strlcpy(dst->exec_paths.exec_paths_str,
-			src->exec_paths.exec_paths_str,
-			sizeof(dst->exec_paths.exec_paths_str));
-
-	return (dst);
+	strlcpy(dst->exec_paths_str, src->exec_paths_str,
+			sizeof(dst->exec_paths_str));
 }
 
 static int 
 parse_and_set_conf(struct prison *pr, const char *rules_string, 
 		const char *exec_paths_string, struct parse_error **parse_error)
 {
-	struct prison *ppr;
-	struct conf *applicable_conf;
+	struct prison *ppr = NULL;
+	struct conf *applicable_conf = NULL;
 	struct conf *conf;
 	int error = 0;
 	bool need_applicable_conf;
@@ -1374,35 +1362,33 @@ parse_and_set_conf(struct prison *pr, const char *rules_string,
 		applicable_conf = find_conf(pr, &ppr);
 		hold_conf(applicable_conf);
 		prison_unlock(ppr);
+	}
 
-		if (ppr == pr)
-			conf = clone_conf(applicable_conf);
-		else 
-			conf = alloc_conf();
-	} else 
-		conf = alloc_conf();
+	conf = alloc_conf();
 
 	if (rules_string != NULL && rules_string[0] != '\0') {
 		error = parse_rules(rules_string, &conf->rules, parse_error);
 		if (error != 0)
 			goto out;
 	}
-	else
-		conf->rules = clone_rules(&applicable_conf->rules);
+	else if (applicable_conf != NULL)
+		clone_rules(&conf->rules, &applicable_conf->rules);
 
 	if (exec_paths_string != NULL && exec_paths_string[0] != '\0') {
 		error = parse_exec_paths(exec_paths_string, &conf->exec_paths, parse_error);
 		if (error != 0)
 			goto out;
-	} else
-		conf->exec_paths = applicable_conf->exec_paths;
+	} else if (applicable_conf != NULL)
+		clone_exec_paths(&conf->exec_paths, &applicable_conf->exec_paths);
 
-	//if (ppr != pr)
 	set_conf(pr, conf);
 
 out:
-	if (need_applicable_conf && applicable_conf != NULL)
+	if (applicable_conf != NULL)
 		drop_conf(applicable_conf);
+	if (error != 0)
+		drop_conf(conf);
+
 	return (error);
 }
 
@@ -2185,7 +2171,7 @@ static int
 mac_do_priv_grant(struct ucred *cred, int priv)
 {
 	struct mac_do_setcred_data *const data = fetch_data();
-	struct rules rules;
+	struct rules *rules;
 	const struct ucred *new_cred;
 	const struct rule *rule;
 	u_int setcred_flags;
@@ -2202,7 +2188,7 @@ mac_do_priv_grant(struct ucred *cred, int priv)
 		/* No. */
 		return (EPERM);
 
-	rules = data->hdr.conf->rules;
+	rules = &data->hdr.conf->rules;
 	new_cred = data->new_cred;
 	KASSERT(new_cred != NULL,
 	    ("priv_check*() called before mac_cred_check_setcred()"));
@@ -2226,7 +2212,7 @@ mac_do_priv_grant(struct ucred *cred, int priv)
 	 * privilege granting functions interpreting the "to"/"target" part.
 	 */
 	error = EPERM;
-	STAILQ_FOREACH(rule, &rules.head, r_entries)
+	STAILQ_FOREACH(rule, &rules->head, r_entries)
 	    if (rule_applies(rule, cred)) {
 		    error = rule_grant_setcred(rule, cred, new_cred);
 		    if (error != EPERM)
@@ -2260,15 +2246,15 @@ check_proc(void)
 		return (EPERM);
 
 	struct conf *conf;
-	struct exec_paths exec_paths;
+	struct exec_paths *exec_paths;
 	struct prison *td_pr = curproc->p_ucred->cr_prison;
 	struct prison *pr;
 	conf = find_conf(td_pr, &pr);
-	exec_paths = conf->exec_paths;
+	exec_paths = &conf->exec_paths;
 
-	if (exec_paths.exec_path_count > 0) {
-		for (int i = 0; i < exec_paths.exec_path_count; i++) {
-			if (strcmp(exec_paths.exec_paths[i], path) == 0) {
+	if (exec_paths->exec_path_count > 0) {
+		for (int i = 0; i < exec_paths->exec_path_count; i++) {
+			if (strcmp(exec_paths->exec_paths[i], path) == 0) {
 				error = 0;
 				break;
 			}
