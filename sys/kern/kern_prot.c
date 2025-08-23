@@ -99,12 +99,11 @@ static inline void
 groups_check_positive_len(int ngrp)
 {
 	MPASS2(ngrp >= 0, "negative number of groups");
-	MPASS2(ngrp != 0, "at least one group expected (effective GID)");
 }
 static inline void
 groups_check_max_len(int ngrp)
 {
-	MPASS2(ngrp <= ngroups_max + 1, "too many groups");
+	MPASS2(ngrp <= ngroups_max, "too many supplementary groups");
 }
 
 static void groups_normalize(int *ngrp, gid_t *groups);
@@ -287,7 +286,7 @@ sys_getgid(struct thread *td, struct getgid_args *uap)
 
 	td->td_retval[0] = td->td_ucred->cr_rgid;
 #if defined(COMPAT_43)
-	td->td_retval[1] = td->td_ucred->cr_groups[0];
+	td->td_retval[1] = td->td_ucred->cr_gid;
 #endif
 	return (0);
 }
@@ -307,9 +306,42 @@ int
 sys_getegid(struct thread *td, struct getegid_args *uap)
 {
 
-	td->td_retval[0] = td->td_ucred->cr_groups[0];
+	td->td_retval[0] = td->td_ucred->cr_gid;
 	return (0);
 }
+
+#ifdef COMPAT_FREEBSD14
+int
+freebsd14_getgroups(struct thread *td, struct freebsd14_getgroups_args *uap)
+{
+	struct ucred *cred;
+	int ngrp, error;
+
+	cred = td->td_ucred;
+
+	/*
+	 * For FreeBSD < 15.0, we account for the egid being placed at the
+	 * beginning of the group list prior to all supplementary groups.
+	 */
+	ngrp = cred->cr_ngroups + 1;
+	if (uap->gidsetsize == 0) {
+		error = 0;
+		goto out;
+	} else if (uap->gidsetsize < ngrp) {
+		return (EINVAL);
+	}
+
+	error = copyout(&cred->cr_gid, uap->gidset, sizeof(gid_t));
+	if (error == 0)
+		error = copyout(cred->cr_groups, uap->gidset + 1,
+		    (ngrp - 1) * sizeof(gid_t));
+
+out:
+	td->td_retval[0] = ngrp;
+	return (error);
+
+}
+#endif	/* COMPAT_FREEBSD14 */
 
 #ifndef _SYS_SYSPROTO_H_
 struct getgroups_args {
@@ -324,8 +356,8 @@ sys_getgroups(struct thread *td, struct getgroups_args *uap)
 	int ngrp, error;
 
 	cred = td->td_ucred;
-	ngrp = cred->cr_ngroups;
 
+	ngrp = cred->cr_ngroups;
 	if (uap->gidsetsize == 0) {
 		error = 0;
 		goto out;
@@ -499,8 +531,8 @@ gidp_cmp(const void *p1, const void *p2)
 }
 
 /*
- * Final storage for groups (including the effective GID) will be returned via
- * 'groups'.  '*groups' must be NULL on input, and if not equal to 'smallgroups'
+ * Final storage for supplementary groups will be returned via 'groups'.
+ * '*groups' must be NULL on input, and if not equal to 'smallgroups'
  * on output, must be freed (M_TEMP) *even if* an error is returned.
  */
 static int
@@ -525,15 +557,15 @@ kern_setcred_copyin_supp_groups(struct setcred *const wcred,
 		 * now, to avoid having to allocate and copy again the
 		 * supplementary groups.
 		 */
-		*groups = wcred->sc_supp_groups_nb < CRED_SMALLGROUPS_NB ?
-		    smallgroups : malloc((wcred->sc_supp_groups_nb + 1) *
+		*groups = wcred->sc_supp_groups_nb <= CRED_SMALLGROUPS_NB ?
+		    smallgroups : malloc(wcred->sc_supp_groups_nb *
 		    sizeof(*groups), M_TEMP, M_WAITOK);
 
-		error = copyin(wcred->sc_supp_groups, *groups + 1,
+		error = copyin(wcred->sc_supp_groups, *groups,
 		    wcred->sc_supp_groups_nb * sizeof(*groups));
 		if (error != 0)
 			return (error);
-		wcred->sc_supp_groups = *groups + 1;
+		wcred->sc_supp_groups = *groups;
 	} else {
 		wcred->sc_supp_groups_nb = 0;
 		wcred->sc_supp_groups = NULL;
@@ -652,9 +684,8 @@ sys_setcred(struct thread *td, struct setcred_args *uap)
  * CAUTION: This function normalizes groups in 'wcred'.
  *
  * If 'preallocated_groups' is non-NULL, it must be an already allocated array
- * of size 'wcred->sc_supp_groups_nb + 1', with the supplementary groups
- * starting at index 1, and 'wcred->sc_supp_groups' then must point to the first
- * supplementary group.
+ * of size 'wcred->sc_supp_groups_nb' containing the supplementary groups, and
+ * 'wcred->sc_supp_groups' then must point to it.
  */
 int
 kern_setcred(struct thread *const td, const u_int flags,
@@ -685,13 +716,14 @@ kern_setcred(struct thread *const td, const u_int flags,
 			return (EINVAL);
 		if (preallocated_groups != NULL) {
 			groups = preallocated_groups;
-			MPASS(preallocated_groups + 1 == wcred->sc_supp_groups);
+			MPASS(preallocated_groups == wcred->sc_supp_groups);
 		} else {
-			groups = wcred->sc_supp_groups_nb < CRED_SMALLGROUPS_NB ?
-			    smallgroups :
-			    malloc((wcred->sc_supp_groups_nb + 1) *
-			    sizeof(*groups), M_TEMP, M_WAITOK);
-			memcpy(groups + 1, wcred->sc_supp_groups,
+			if (wcred->sc_supp_groups_nb <= CRED_SMALLGROUPS_NB)
+				groups = smallgroups;
+			else
+				groups = malloc(wcred->sc_supp_groups_nb *
+				    sizeof(*groups), M_TEMP, M_WAITOK);
+			memcpy(groups, wcred->sc_supp_groups,
 			    wcred->sc_supp_groups_nb * sizeof(*groups));
 		}
 	}
@@ -726,16 +758,12 @@ kern_setcred(struct thread *const td, const u_int flags,
 	if (flags & SETCREDF_SVGID)
 		AUDIT_ARG_SGID(wcred->sc_svgid);
 	if (flags & SETCREDF_SUPP_GROUPS) {
-		int ngrp = wcred->sc_supp_groups_nb;
-
 		/*
 		 * Output the raw supplementary groups array for better
 		 * traceability.
 		 */
-		AUDIT_ARG_GROUPSET(groups + 1, ngrp);
-		++ngrp;
-		groups_normalize(&ngrp, groups);
-		wcred->sc_supp_groups_nb = ngrp - 1;
+		AUDIT_ARG_GROUPSET(groups, wcred->sc_supp_groups_nb);
+		groups_normalize(&wcred->sc_supp_groups_nb, groups);
 	}
 
 	/*
@@ -746,7 +774,7 @@ kern_setcred(struct thread *const td, const u_int flags,
 	new_cred = crget();
 	to_free_cred = new_cred;
 	if (flags & SETCREDF_SUPP_GROUPS)
-		crextend(new_cred, wcred->sc_supp_groups_nb + 1);
+		crextend(new_cred, wcred->sc_supp_groups_nb);
 
 #ifdef MAC
 	mac_cred_setcred_enter();
@@ -773,16 +801,11 @@ kern_setcred(struct thread *const td, const u_int flags,
 
 	/*
 	 * Change groups.
-	 *
-	 * crsetgroups_internal() changes both the effective and supplementary
-	 * ones.
 	 */
-	if (flags & SETCREDF_SUPP_GROUPS) {
-		groups[0] = flags & SETCREDF_GID ? wcred->sc_gid :
-		    new_cred->cr_gid;
-		crsetgroups_internal(new_cred, wcred->sc_supp_groups_nb + 1,
+	if (flags & SETCREDF_SUPP_GROUPS)
+		crsetgroups_internal(new_cred, wcred->sc_supp_groups_nb,
 		    groups);
-	} else if (flags & SETCREDF_GID)
+	if (flags & SETCREDF_GID)
 		change_egid(new_cred, wcred->sc_gid);
 	if (flags & SETCREDF_RGID)
 		change_rgid(new_cred, wcred->sc_rgid);
@@ -874,6 +897,10 @@ sys_setuid(struct thread *td, struct setuid_args *uap)
 	uid_t uid;
 	struct uidinfo *uip;
 	int error;
+
+#ifdef MAC
+	mac_cred_setuid_enter();
+#endif
 
 	uid = uap->uid;
 	AUDIT_ARG_UID(uid);
@@ -973,12 +1000,18 @@ sys_setuid(struct thread *td, struct setuid_args *uap)
 #endif
 	uifree(uip);
 	crfree(oldcred);
+#ifdef MAC
+	mac_cred_setuid_exit();
+#endif
 	return (0);
 
 fail:
 	PROC_UNLOCK(p);
 	uifree(uip);
 	crfree(newcred);
+#ifdef MAC
+	mac_cred_setuid_exit();
+#endif
 	return (error);
 }
 
@@ -996,6 +1029,10 @@ sys_seteuid(struct thread *td, struct seteuid_args *uap)
 	uid_t euid;
 	struct uidinfo *euip;
 	int error;
+
+#ifdef MAC
+	mac_cred_seteuid_enter();
+#endif
 
 	euid = uap->euid;
 	AUDIT_ARG_EUID(euid);
@@ -1029,12 +1066,18 @@ sys_seteuid(struct thread *td, struct seteuid_args *uap)
 	PROC_UNLOCK(p);
 	uifree(euip);
 	crfree(oldcred);
+#ifdef MAC
+	mac_cred_seteuid_exit();
+#endif
 	return (0);
 
 fail:
 	PROC_UNLOCK(p);
 	uifree(euip);
 	crfree(newcred);
+#ifdef MAC
+	mac_cred_seteuid_exit();
+#endif
 	return (error);
 }
 
@@ -1051,6 +1094,10 @@ sys_setgid(struct thread *td, struct setgid_args *uap)
 	struct ucred *newcred, *oldcred;
 	gid_t gid;
 	int error;
+
+#ifdef MAC
+	mac_cred_setgid_enter();
+#endif
 
 	gid = uap->gid;
 	AUDIT_ARG_GID(gid);
@@ -1080,7 +1127,7 @@ sys_setgid(struct thread *td, struct setgid_args *uap)
 	    gid != oldcred->cr_svgid &&		/* allow setgid(saved gid) */
 #endif
 #ifdef POSIX_APPENDIX_B_4_2_2	/* Use BSD-compat clause from B.4.2.2 */
-	    gid != oldcred->cr_groups[0] && /* allow setgid(getegid()) */
+	    gid != oldcred->cr_gid && /* allow setgid(getegid()) */
 #endif
 	    (error = priv_check_cred(oldcred, PRIV_CRED_SETGID)) != 0)
 		goto fail;
@@ -1092,7 +1139,7 @@ sys_setgid(struct thread *td, struct setgid_args *uap)
 	 */
 	if (
 #ifdef POSIX_APPENDIX_B_4_2_2	/* use the clause from B.4.2.2 */
-	    gid == oldcred->cr_groups[0] ||
+	    gid == oldcred->cr_gid ||
 #endif
 	    /* We are using privs. */
 	    priv_check_cred(oldcred, PRIV_CRED_SETGID) == 0)
@@ -1121,18 +1168,24 @@ sys_setgid(struct thread *td, struct setgid_args *uap)
 	 * In all cases permitted cases, we are changing the egid.
 	 * Copy credentials so other references do not see our changes.
 	 */
-	if (oldcred->cr_groups[0] != gid) {
+	if (oldcred->cr_gid != gid) {
 		change_egid(newcred, gid);
 		setsugid(p);
 	}
 	proc_set_cred(p, newcred);
 	PROC_UNLOCK(p);
 	crfree(oldcred);
+#ifdef MAC
+	mac_cred_setgid_exit();
+#endif
 	return (0);
 
 fail:
 	PROC_UNLOCK(p);
 	crfree(newcred);
+#ifdef MAC
+	mac_cred_setgid_exit();
+#endif
 	return (error);
 }
 
@@ -1149,6 +1202,10 @@ sys_setegid(struct thread *td, struct setegid_args *uap)
 	struct ucred *newcred, *oldcred;
 	gid_t egid;
 	int error;
+
+#ifdef MAC
+	mac_cred_setegid_enter();
+#endif
 
 	egid = uap->egid;
 	AUDIT_ARG_EGID(egid);
@@ -1167,20 +1224,64 @@ sys_setegid(struct thread *td, struct setegid_args *uap)
 	    (error = priv_check_cred(oldcred, PRIV_CRED_SETEGID)) != 0)
 		goto fail;
 
-	if (oldcred->cr_groups[0] != egid) {
+	if (oldcred->cr_gid != egid) {
 		change_egid(newcred, egid);
 		setsugid(p);
 	}
 	proc_set_cred(p, newcred);
 	PROC_UNLOCK(p);
 	crfree(oldcred);
+#ifdef MAC
+	mac_cred_setegid_exit();
+#endif
 	return (0);
 
 fail:
 	PROC_UNLOCK(p);
 	crfree(newcred);
+#ifdef MAC
+	mac_cred_setegid_exit();
+#endif
 	return (error);
 }
+
+#ifdef COMPAT_FREEBSD14
+int
+freebsd14_setgroups(struct thread *td, struct freebsd14_setgroups_args *uap)
+{
+	gid_t smallgroups[CRED_SMALLGROUPS_NB];
+	gid_t *groups;
+	int gidsetsize, error;
+
+	/*
+	 * Before FreeBSD 15.0, we allow one more group to be supplied to
+	 * account for the egid appearing before the supplementary groups.  This
+	 * may technically allow one more supplementary group for systems that
+	 * did use the default NGROUPS_MAX if we round it back up to 1024.
+	 */
+	gidsetsize = uap->gidsetsize;
+	if (gidsetsize > ngroups_max + 1 || gidsetsize < 0)
+		return (EINVAL);
+
+	if (gidsetsize > CRED_SMALLGROUPS_NB)
+		groups = malloc(gidsetsize * sizeof(gid_t), M_TEMP, M_WAITOK);
+	else
+		groups = smallgroups;
+
+	error = copyin(uap->gidset, groups, gidsetsize * sizeof(gid_t));
+	if (error == 0) {
+		int ngroups = gidsetsize > 0 ? gidsetsize - 1 /* egid */ : 0;
+
+		error = kern_setgroups(td, &ngroups, groups + 1);
+		if (error == 0 && gidsetsize > 0)
+			td->td_proc->p_ucred->cr_gid = groups[0];
+	}
+
+	if (groups != smallgroups)
+		free(groups, M_TEMP);
+	return (error);
+}
+#endif	/* COMPAT_FREEBSD14 */
 
 #ifndef _SYS_SYSPROTO_H_
 struct setgroups_args {
@@ -1206,7 +1307,7 @@ sys_setgroups(struct thread *td, struct setgroups_args *uap)
 	 * setgroups() differ.
 	 */
 	gidsetsize = uap->gidsetsize;
-	if (gidsetsize > ngroups_max + 1 || gidsetsize < 0)
+	if (gidsetsize > ngroups_max || gidsetsize < 0)
 		return (EINVAL);
 
 	if (gidsetsize > CRED_SMALLGROUPS_NB)
@@ -1234,28 +1335,34 @@ kern_setgroups(struct thread *td, int *ngrpp, gid_t *groups)
 	struct ucred *newcred, *oldcred;
 	int ngrp, error;
 
+#ifdef MAC
+	mac_cred_setgroups_enter();
+#endif
+
 	ngrp = *ngrpp;
 	/* Sanity check size. */
-	if (ngrp < 0 || ngrp > ngroups_max + 1)
+	if (ngrp < 0 || ngrp > ngroups_max)
 		return (EINVAL);
 
 	AUDIT_ARG_GROUPSET(groups, ngrp);
-	if (ngrp != 0) {
-		/* We allow and treat 0 specially below. */
-		groups_normalize(ngrpp, groups);
-		ngrp = *ngrpp;
-	}
+
+	groups_normalize(&ngrp, groups);
+	*ngrpp = ngrp;
+
 	newcred = crget();
-	if (ngrp != 0)
-		crextend(newcred, ngrp);
+	crextend(newcred, ngrp);
 	PROC_LOCK(p);
 	oldcred = crcopysafe(p, newcred);
 
 #ifdef MAC
-	error = ngrp == 0 ?
-	    /* If 'ngrp' is 0, we'll keep just the current effective GID. */
-	    mac_cred_check_setgroups(oldcred, 1, oldcred->cr_groups) :
-	    mac_cred_check_setgroups(oldcred, ngrp, groups);
+	/*
+	 * We pass NULL here explicitly if we don't have any supplementary
+	 * groups mostly for the sake of normalization, but also to avoid/detect
+	 * a situation where a MAC module has some assumption about the layout
+	 * of `groups` matching historical behavior.
+	 */
+	error = mac_cred_check_setgroups(oldcred, ngrp,
+	    ngrp == 0 ? NULL : groups);
 	if (error)
 		goto fail;
 #endif
@@ -1264,26 +1371,22 @@ kern_setgroups(struct thread *td, int *ngrpp, gid_t *groups)
 	if (error)
 		goto fail;
 
-	if (ngrp == 0) {
-		/*
-		 * setgroups(0, NULL) is a legitimate way of clearing the
-		 * groups vector on non-BSD systems (which generally do not
-		 * have the egid in the groups[0]).  We risk security holes
-		 * when running non-BSD software if we do not do the same.
-		 */
-		newcred->cr_ngroups = 1;
-	} else
-		crsetgroups_internal(newcred, ngrp, groups);
-
+	crsetgroups_internal(newcred, ngrp, groups);
 	setsugid(p);
 	proc_set_cred(p, newcred);
 	PROC_UNLOCK(p);
 	crfree(oldcred);
+#ifdef MAC
+	mac_cred_setgroups_exit();
+#endif
 	return (0);
 
 fail:
 	PROC_UNLOCK(p);
 	crfree(newcred);
+#ifdef MAC
+	mac_cred_setgroups_exit();
+#endif
 	return (error);
 }
 
@@ -1302,6 +1405,10 @@ sys_setreuid(struct thread *td, struct setreuid_args *uap)
 	uid_t euid, ruid;
 	struct uidinfo *euip, *ruip;
 	int error;
+
+#ifdef MAC
+	mac_cred_setuid_enter();
+#endif
 
 	euid = uap->euid;
 	ruid = uap->ruid;
@@ -1352,6 +1459,9 @@ sys_setreuid(struct thread *td, struct setreuid_args *uap)
 	uifree(ruip);
 	uifree(euip);
 	crfree(oldcred);
+#ifdef MAC
+	mac_cred_setreuid_exit();
+#endif
 	return (0);
 
 fail:
@@ -1359,6 +1469,9 @@ fail:
 	uifree(ruip);
 	uifree(euip);
 	crfree(newcred);
+#ifdef MAC
+	mac_cred_setreuid_exit();
+#endif
 	return (error);
 }
 
@@ -1377,6 +1490,10 @@ sys_setregid(struct thread *td, struct setregid_args *uap)
 	gid_t egid, rgid;
 	int error;
 
+#ifdef MAC
+	mac_cred_setregid_enter();
+#endif
+
 	egid = uap->egid;
 	rgid = uap->rgid;
 	AUDIT_ARG_EGID(egid);
@@ -1393,12 +1510,12 @@ sys_setregid(struct thread *td, struct setregid_args *uap)
 
 	if (((rgid != (gid_t)-1 && rgid != oldcred->cr_rgid &&
 	    rgid != oldcred->cr_svgid) ||
-	     (egid != (gid_t)-1 && egid != oldcred->cr_groups[0] &&
+	     (egid != (gid_t)-1 && egid != oldcred->cr_gid &&
 	     egid != oldcred->cr_rgid && egid != oldcred->cr_svgid)) &&
 	    (error = priv_check_cred(oldcred, PRIV_CRED_SETREGID)) != 0)
 		goto fail;
 
-	if (egid != (gid_t)-1 && oldcred->cr_groups[0] != egid) {
+	if (egid != (gid_t)-1 && oldcred->cr_gid != egid) {
 		change_egid(newcred, egid);
 		setsugid(p);
 	}
@@ -1406,19 +1523,25 @@ sys_setregid(struct thread *td, struct setregid_args *uap)
 		change_rgid(newcred, rgid);
 		setsugid(p);
 	}
-	if ((rgid != (gid_t)-1 || newcred->cr_groups[0] != newcred->cr_rgid) &&
-	    newcred->cr_svgid != newcred->cr_groups[0]) {
-		change_svgid(newcred, newcred->cr_groups[0]);
+	if ((rgid != (gid_t)-1 || newcred->cr_gid != newcred->cr_rgid) &&
+	    newcred->cr_svgid != newcred->cr_gid) {
+		change_svgid(newcred, newcred->cr_gid);
 		setsugid(p);
 	}
 	proc_set_cred(p, newcred);
 	PROC_UNLOCK(p);
 	crfree(oldcred);
+#ifdef MAC
+	mac_cred_setregid_exit();
+#endif
 	return (0);
 
 fail:
 	PROC_UNLOCK(p);
 	crfree(newcred);
+#ifdef MAC
+	mac_cred_setregid_exit();
+#endif
 	return (error);
 }
 
@@ -1442,6 +1565,10 @@ sys_setresuid(struct thread *td, struct setresuid_args *uap)
 	uid_t euid, ruid, suid;
 	struct uidinfo *euip, *ruip;
 	int error;
+
+#ifdef MAC
+	mac_cred_setuid_enter();
+#endif
 
 	euid = uap->euid;
 	ruid = uap->ruid;
@@ -1498,6 +1625,9 @@ sys_setresuid(struct thread *td, struct setresuid_args *uap)
 	uifree(ruip);
 	uifree(euip);
 	crfree(oldcred);
+#ifdef MAC
+	mac_cred_setresuid_exit();
+#endif
 	return (0);
 
 fail:
@@ -1505,6 +1635,9 @@ fail:
 	uifree(ruip);
 	uifree(euip);
 	crfree(newcred);
+#ifdef MAC
+	mac_cred_setresuid_exit();
+#endif
 	return (error);
 
 }
@@ -1529,6 +1662,10 @@ sys_setresgid(struct thread *td, struct setresgid_args *uap)
 	gid_t egid, rgid, sgid;
 	int error;
 
+#ifdef MAC
+	mac_cred_setresgid_enter();
+#endif
+
 	egid = uap->egid;
 	rgid = uap->rgid;
 	sgid = uap->sgid;
@@ -1547,17 +1684,17 @@ sys_setresgid(struct thread *td, struct setresgid_args *uap)
 
 	if (((rgid != (gid_t)-1 && rgid != oldcred->cr_rgid &&
 	      rgid != oldcred->cr_svgid &&
-	      rgid != oldcred->cr_groups[0]) ||
+	      rgid != oldcred->cr_gid) ||
 	     (egid != (gid_t)-1 && egid != oldcred->cr_rgid &&
 	      egid != oldcred->cr_svgid &&
-	      egid != oldcred->cr_groups[0]) ||
+	      egid != oldcred->cr_gid) ||
 	     (sgid != (gid_t)-1 && sgid != oldcred->cr_rgid &&
 	      sgid != oldcred->cr_svgid &&
-	      sgid != oldcred->cr_groups[0])) &&
+	      sgid != oldcred->cr_gid)) &&
 	    (error = priv_check_cred(oldcred, PRIV_CRED_SETRESGID)) != 0)
 		goto fail;
 
-	if (egid != (gid_t)-1 && oldcred->cr_groups[0] != egid) {
+	if (egid != (gid_t)-1 && oldcred->cr_gid != egid) {
 		change_egid(newcred, egid);
 		setsugid(p);
 	}
@@ -1572,11 +1709,17 @@ sys_setresgid(struct thread *td, struct setresgid_args *uap)
 	proc_set_cred(p, newcred);
 	PROC_UNLOCK(p);
 	crfree(oldcred);
+#ifdef MAC
+	mac_cred_setresgid_exit();
+#endif
 	return (0);
 
 fail:
 	PROC_UNLOCK(p);
 	crfree(newcred);
+#ifdef MAC
+	mac_cred_setresgid_exit();
+#endif
 	return (error);
 }
 
@@ -1626,8 +1769,8 @@ sys_getresgid(struct thread *td, struct getresgid_args *uap)
 		error1 = copyout(&cred->cr_rgid,
 		    uap->rgid, sizeof(cred->cr_rgid));
 	if (uap->egid)
-		error2 = copyout(&cred->cr_groups[0],
-		    uap->egid, sizeof(cred->cr_groups[0]));
+		error2 = copyout(&cred->cr_gid,
+		    uap->egid, sizeof(cred->cr_gid));
 	if (uap->sgid)
 		error3 = copyout(&cred->cr_svgid,
 		    uap->sgid, sizeof(cred->cr_svgid));
@@ -1693,11 +1836,11 @@ groups_check_normalized(int ngrp, const gid_t *groups)
 	groups_check_positive_len(ngrp);
 	groups_check_max_len(ngrp);
 
-	if (ngrp == 1)
+	if (ngrp <= 1)
 		return;
 
-	prev_g = groups[1];
-	for (int i = 2; i < ngrp; ++i) {
+	prev_g = groups[0];
+	for (int i = 1; i < ngrp; ++i) {
 		const gid_t g = groups[i];
 
 		if (prev_g >= g)
@@ -1723,7 +1866,7 @@ group_is_supplementary(const gid_t gid, const struct ucred *const cred)
 	 * Perform a binary search of the supplementary groups.  This is
 	 * possible because we sort the groups in crsetgroups().
 	 */
-	return (bsearch(&gid, cred->cr_groups + 1, cred->cr_ngroups - 1,
+	return (bsearch(&gid, cred->cr_groups, cred->cr_ngroups,
 	    sizeof(gid), gidp_cmp) != NULL);
 }
 
@@ -1737,7 +1880,7 @@ groupmember(gid_t gid, const struct ucred *cred)
 
 	groups_check_positive_len(cred->cr_ngroups);
 
-	if (gid == cred->cr_groups[0])
+	if (gid == cred->cr_gid)
 		return (true);
 
 	return (group_is_supplementary(gid, cred));
@@ -1891,6 +2034,38 @@ cr_canseejailproc(struct ucred *u1, struct ucred *u2)
 }
 
 /*
+ * Determine if u1 can tamper with the subject specified by u2, if they are in
+ * different jails and 'unprivileged_parent_tampering' jail policy allows it.
+ *
+ * May be called if u1 and u2 are in the same jail, but it is expected that the
+ * caller has already done a prison_check() prior to calling it.
+ *
+ * Returns: 0 for permitted, EPERM otherwise
+ */
+static int
+cr_can_tamper_with_subjail(struct ucred *u1, struct ucred *u2, int priv)
+{
+
+	MPASS(prison_check(u1, u2) == 0);
+	if (u1->cr_prison == u2->cr_prison)
+		return (0);
+
+	if (priv_check_cred(u1, priv) == 0)
+		return (0);
+
+	/*
+	 * Jails do not maintain a distinct UID space, so process visibility is
+	 * all that would control an unprivileged process' ability to tamper
+	 * with a process in a subjail by default if we did not have the
+	 * allow.unprivileged_parent_tampering knob to restrict it by default.
+	 */
+	if (prison_allow(u2, PR_ALLOW_UNPRIV_PARENT_TAMPER))
+		return (0);
+
+	return (EPERM);
+}
+
+/*
  * Helper for cr_cansee*() functions to abide by system-wide security.bsd.see_*
  * policies.  Determines if u1 "can see" u2 according to these policies.
  * Returns: 0 for permitted, ESRCH otherwise
@@ -2039,6 +2214,19 @@ cr_cansignal(struct ucred *cred, struct proc *proc, int signum)
 			return (error);
 	}
 
+	/*
+	 * At this point, the target may be in a different jail than the
+	 * subject -- the subject must be in a parent jail to the target,
+	 * whether it is prison0 or a subordinate of prison0 that has
+	 * children.  Additional privileges are required to allow this, as
+	 * whether the creds are truly equivalent or not must be determined on
+	 * a case-by-case basis.
+	 */
+	error = cr_can_tamper_with_subjail(cred, proc->p_ucred,
+	    PRIV_SIGNAL_DIFFJAIL);
+	if (error)
+		return (error);
+
 	return (0);
 }
 
@@ -2115,6 +2303,12 @@ p_cansched(struct thread *td, struct proc *p)
 		if (error)
 			return (error);
 	}
+
+	error = cr_can_tamper_with_subjail(td->td_ucred, p->p_ucred,
+	    PRIV_SCHED_DIFFJAIL);
+	if (error)
+		return (error);
+
 	return (0);
 }
 
@@ -2150,6 +2344,43 @@ SYSCTL_PROC(_security_bsd, OID_AUTO, unprivileged_proc_debug,
     CTLFLAG_MPSAFE, 0, 0, sysctl_unprivileged_proc_debug, "I",
     "Unprivileged processes may use process debugging facilities");
 
+/*
+ * Return true if the object owner/group ids are subset of the active
+ * credentials.
+ */
+bool
+cr_xids_subset(struct ucred *active_cred, struct ucred *obj_cred)
+{
+	int i;
+	bool grpsubset, uidsubset;
+
+	/*
+	 * Is p's group set a subset of td's effective group set?  This
+	 * includes p's egid, group access list, rgid, and svgid.
+	 */
+	grpsubset = true;
+	for (i = 0; i < obj_cred->cr_ngroups; i++) {
+		if (!groupmember(obj_cred->cr_groups[i], active_cred)) {
+			grpsubset = false;
+			break;
+		}
+	}
+	grpsubset = grpsubset &&
+	    groupmember(obj_cred->cr_rgid, active_cred) &&
+	    groupmember(obj_cred->cr_svgid, active_cred);
+
+	/*
+	 * Are the uids present in obj_cred's credential equal to
+	 * active_cred's effective uid?  This includes obj_cred's
+	 * euid, svuid, and ruid.
+	 */
+	uidsubset = (active_cred->cr_uid == obj_cred->cr_uid &&
+	    active_cred->cr_uid == obj_cred->cr_svuid &&
+	    active_cred->cr_uid == obj_cred->cr_ruid);
+
+	return (uidsubset && grpsubset);
+}
+
 /*-
  * Determine whether td may debug p.
  * Returns: 0 for permitted, an errno value otherwise
@@ -2161,7 +2392,7 @@ SYSCTL_PROC(_security_bsd, OID_AUTO, unprivileged_proc_debug,
 int
 p_candebug(struct thread *td, struct proc *p)
 {
-	int error, grpsubset, i, uidsubset;
+	int error;
 
 	KASSERT(td == curthread, ("%s: td not curthread", __func__));
 	PROC_LOCK_ASSERT(p, MA_OWNED);
@@ -2179,34 +2410,11 @@ p_candebug(struct thread *td, struct proc *p)
 		return (error);
 
 	/*
-	 * Is p's group set a subset of td's effective group set?  This
-	 * includes p's egid, group access list, rgid, and svgid.
-	 */
-	grpsubset = 1;
-	for (i = 0; i < p->p_ucred->cr_ngroups; i++) {
-		if (!groupmember(p->p_ucred->cr_groups[i], td->td_ucred)) {
-			grpsubset = 0;
-			break;
-		}
-	}
-	grpsubset = grpsubset &&
-	    groupmember(p->p_ucred->cr_rgid, td->td_ucred) &&
-	    groupmember(p->p_ucred->cr_svgid, td->td_ucred);
-
-	/*
-	 * Are the uids present in p's credential equal to td's
-	 * effective uid?  This includes p's euid, svuid, and ruid.
-	 */
-	uidsubset = (td->td_ucred->cr_uid == p->p_ucred->cr_uid &&
-	    td->td_ucred->cr_uid == p->p_ucred->cr_svuid &&
-	    td->td_ucred->cr_uid == p->p_ucred->cr_ruid);
-
-	/*
 	 * If p's gids aren't a subset, or the uids aren't a subset,
 	 * or the credential has changed, require appropriate privilege
 	 * for td to debug p.
 	 */
-	if (!grpsubset || !uidsubset) {
+	if (!cr_xids_subset(td->td_ucred, p->p_ucred)) {
 		error = priv_check(td, PRIV_DEBUG_DIFFCRED);
 		if (error)
 			return (error);
@@ -2220,6 +2428,11 @@ p_candebug(struct thread *td, struct proc *p)
 		if (error)
 			return (error);
 	}
+
+	error = cr_can_tamper_with_subjail(td->td_ucred, p->p_ucred,
+	    PRIV_DEBUG_DIFFJAIL);
+	if (error)
+		return (error);
 
 	/* Can't trace init when securelevel > 0. */
 	if (p == initproc) {
@@ -2574,11 +2787,6 @@ void
 crcopy(struct ucred *dest, struct ucred *src)
 {
 
-	/*
-	 * Ideally, 'cr_ngroups' should be moved out of 'struct ucred''s bcopied
-	 * area, but this would break the ABI, so is deferred until there is
-	 * a compelling need to change it.
-	 */
 	bcopy(&src->cr_startcopy, &dest->cr_startcopy,
 	    (unsigned)((caddr_t)&src->cr_endcopy -
 		(caddr_t)&src->cr_startcopy));
@@ -2620,11 +2828,17 @@ cru2x(struct ucred *cr, struct xucred *xcr)
 	bzero(xcr, sizeof(*xcr));
 	xcr->cr_version = XUCRED_VERSION;
 	xcr->cr_uid = cr->cr_uid;
+	xcr->cr_gid = cr->cr_gid;
 
-	ngroups = MIN(cr->cr_ngroups, XU_NGROUPS);
+	/*
+	 * We use a union to alias cr_gid to cr_groups[0] in the xucred, so
+	 * this is kind of ugly; cr_ngroups still includes the egid for our
+	 * purposes to avoid bumping the xucred version.
+	 */
+	ngroups = MIN(cr->cr_ngroups + 1, nitems(xcr->cr_groups));
 	xcr->cr_ngroups = ngroups;
-	bcopy(cr->cr_groups, xcr->cr_groups,
-	    ngroups * sizeof(*cr->cr_groups));
+	bcopy(cr->cr_groups, xcr->cr_sgroups,
+	    (ngroups - 1) * sizeof(*cr->cr_groups));
 }
 
 void
@@ -2735,8 +2949,8 @@ crcopysafe(struct proc *p, struct ucred *cr)
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 
 	oldcred = p->p_ucred;
-	while (cr->cr_agroups < oldcred->cr_agroups) {
-		groups = oldcred->cr_agroups;
+	while (cr->cr_agroups < oldcred->cr_ngroups) {
+		groups = oldcred->cr_ngroups;
 		PROC_UNLOCK(p);
 		crextend(cr, groups);
 		PROC_LOCK(p);
@@ -2758,7 +2972,8 @@ crextend(struct ucred *cr, int n)
 	size_t nbytes;
 
 	MPASS2(cr->cr_ref == 1, "'cr_ref' must be 1 (referenced, unshared)");
-	MPASS2(cr->cr_ngroups == 0, "groups on 'cr' already set!");
+	MPASS2((cr->cr_flags & CRED_FLAG_GROUPSET) == 0,
+	    "groups on 'cr' already set!");
 	groups_check_positive_len(n);
 	groups_check_max_len(n);
 
@@ -2795,12 +3010,9 @@ crextend(struct ucred *cr, int n)
 /*
  * Normalizes a set of groups to be applied to a 'struct ucred'.
  *
- * The set of groups is an array that must comprise the effective GID as its
- * first element (so its length cannot be 0).
- *
- * Normalization ensures that elements after the first, which stand for the
- * supplementary groups, are sorted in ascending order and do not contain
- * duplicates.
+ * Normalization ensures that the supplementary groups are sorted in ascending
+ * order and do not contain duplicates.  This allows group_is_supplementary
+ * to do a binary search.
  */
 static void
 groups_normalize(int *ngrp, gid_t *groups)
@@ -2811,15 +3023,15 @@ groups_normalize(int *ngrp, gid_t *groups)
 	groups_check_positive_len(*ngrp);
 	groups_check_max_len(*ngrp);
 
-	if (*ngrp == 1)
+	if (*ngrp <= 1)
 		return;
 
-	qsort(groups + 1, *ngrp - 1, sizeof(*groups), gidp_cmp);
+	qsort(groups, *ngrp, sizeof(*groups), gidp_cmp);
 
 	/* Remove duplicates. */
-	prev_g = groups[1];
-	ins_idx = 2;
-	for (int i = 2; i < *ngrp; ++i) {
+	prev_g = groups[0];
+	ins_idx = 1;
+	for (int i = ins_idx; i < *ngrp; ++i) {
 		const gid_t g = groups[i];
 
 		if (g != prev_g) {
@@ -2856,13 +3068,14 @@ crsetgroups_internal(struct ucred *cr, int ngrp, const gid_t *groups)
 
 	bcopy(groups, cr->cr_groups, ngrp * sizeof(gid_t));
 	cr->cr_ngroups = ngrp;
+	cr->cr_flags |= CRED_FLAG_GROUPSET;
 }
 
 /*
  * Copy groups in to a credential after expanding it if required.
  *
  * May sleep in order to allocate memory (except if, e.g., crextend() was called
- * before with 'ngrp' or greater).  Truncates the list to (ngroups_max + 1) if
+ * before with 'ngrp' or greater).  Truncates the list to ngroups_max if
  * it is too large.  Array 'groups' doesn't need to be sorted.  'ngrp' must be
  * strictly positive.
  */
@@ -2870,36 +3083,48 @@ void
 crsetgroups(struct ucred *cr, int ngrp, const gid_t *groups)
 {
 
-	if (ngrp > ngroups_max + 1)
-		ngrp = ngroups_max + 1;
+	if (ngrp > ngroups_max)
+		ngrp = ngroups_max;
+	cr->cr_ngroups = 0;
+	if (ngrp == 0) {
+		cr->cr_flags |= CRED_FLAG_GROUPSET;
+		return;
+	}
+
 	/*
 	 * crextend() asserts that groups are not set, as it may allocate a new
 	 * backing storage without copying the content of the old one.  Since we
 	 * are going to install a completely new set anyway, signal that we
 	 * consider the old ones thrown away.
 	 */
-	cr->cr_ngroups = 0;
+	cr->cr_flags &= ~CRED_FLAG_GROUPSET;
+
 	crextend(cr, ngrp);
 	crsetgroups_internal(cr, ngrp, groups);
 	groups_normalize(&cr->cr_ngroups, cr->cr_groups);
 }
 
 /*
- * Same as crsetgroups() but accepts an empty groups array.
+ * Same as crsetgroups() but sets the effective GID as well.
  *
  * This function ensures that an effective GID is always present in credentials.
- * An empty array is treated as a one-size one holding the passed effective GID
- * fallback.
+ * An empty array will only set the effective GID to the default_egid, while a
+ * non-empty array will peel off groups[0] to set as the effective GID and use
+ * the remainder, if any, as supplementary groups.
  */
 void
-crsetgroups_fallback(struct ucred *cr, int ngrp, const gid_t *groups,
-    const gid_t fallback)
+crsetgroups_and_egid(struct ucred *cr, int ngrp, const gid_t *groups,
+    const gid_t default_egid)
 {
-	if (ngrp == 0)
-		/* Shortcut. */
-		crsetgroups_internal(cr, 1, &fallback);
-	else
-		crsetgroups(cr, ngrp, groups);
+	if (ngrp == 0) {
+		cr->cr_gid = default_egid;
+		cr->cr_ngroups = 0;
+		cr->cr_flags |= CRED_FLAG_GROUPSET;
+		return;
+	}
+
+	crsetgroups(cr, ngrp - 1, groups + 1);
+	cr->cr_gid = groups[0];
 }
 
 /*
@@ -3001,7 +3226,7 @@ void
 change_egid(struct ucred *newcred, gid_t egid)
 {
 
-	newcred->cr_groups[0] = egid;
+	newcred->cr_gid = egid;
 }
 
 /*-
