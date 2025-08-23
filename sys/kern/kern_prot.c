@@ -898,6 +898,10 @@ sys_setuid(struct thread *td, struct setuid_args *uap)
 	struct uidinfo *uip;
 	int error;
 
+#ifdef MAC
+	mac_cred_setuid_enter();
+#endif
+
 	uid = uap->uid;
 	AUDIT_ARG_UID(uid);
 	newcred = crget();
@@ -996,12 +1000,18 @@ sys_setuid(struct thread *td, struct setuid_args *uap)
 #endif
 	uifree(uip);
 	crfree(oldcred);
+#ifdef MAC
+	mac_cred_setuid_exit();
+#endif
 	return (0);
 
 fail:
 	PROC_UNLOCK(p);
 	uifree(uip);
 	crfree(newcred);
+#ifdef MAC
+	mac_cred_setuid_exit();
+#endif
 	return (error);
 }
 
@@ -1019,6 +1029,10 @@ sys_seteuid(struct thread *td, struct seteuid_args *uap)
 	uid_t euid;
 	struct uidinfo *euip;
 	int error;
+
+#ifdef MAC
+	mac_cred_seteuid_enter();
+#endif
 
 	euid = uap->euid;
 	AUDIT_ARG_EUID(euid);
@@ -1052,12 +1066,18 @@ sys_seteuid(struct thread *td, struct seteuid_args *uap)
 	PROC_UNLOCK(p);
 	uifree(euip);
 	crfree(oldcred);
+#ifdef MAC
+	mac_cred_seteuid_exit();
+#endif
 	return (0);
 
 fail:
 	PROC_UNLOCK(p);
 	uifree(euip);
 	crfree(newcred);
+#ifdef MAC
+	mac_cred_seteuid_exit();
+#endif
 	return (error);
 }
 
@@ -1074,6 +1094,10 @@ sys_setgid(struct thread *td, struct setgid_args *uap)
 	struct ucred *newcred, *oldcred;
 	gid_t gid;
 	int error;
+
+#ifdef MAC
+	mac_cred_setgid_enter();
+#endif
 
 	gid = uap->gid;
 	AUDIT_ARG_GID(gid);
@@ -1151,11 +1175,17 @@ sys_setgid(struct thread *td, struct setgid_args *uap)
 	proc_set_cred(p, newcred);
 	PROC_UNLOCK(p);
 	crfree(oldcred);
+#ifdef MAC
+	mac_cred_setgid_exit();
+#endif
 	return (0);
 
 fail:
 	PROC_UNLOCK(p);
 	crfree(newcred);
+#ifdef MAC
+	mac_cred_setgid_exit();
+#endif
 	return (error);
 }
 
@@ -1172,6 +1202,10 @@ sys_setegid(struct thread *td, struct setegid_args *uap)
 	struct ucred *newcred, *oldcred;
 	gid_t egid;
 	int error;
+
+#ifdef MAC
+	mac_cred_setegid_enter();
+#endif
 
 	egid = uap->egid;
 	AUDIT_ARG_EGID(egid);
@@ -1197,11 +1231,17 @@ sys_setegid(struct thread *td, struct setegid_args *uap)
 	proc_set_cred(p, newcred);
 	PROC_UNLOCK(p);
 	crfree(oldcred);
+#ifdef MAC
+	mac_cred_setegid_exit();
+#endif
 	return (0);
 
 fail:
 	PROC_UNLOCK(p);
 	crfree(newcred);
+#ifdef MAC
+	mac_cred_setegid_exit();
+#endif
 	return (error);
 }
 
@@ -1295,6 +1335,10 @@ kern_setgroups(struct thread *td, int *ngrpp, gid_t *groups)
 	struct ucred *newcred, *oldcred;
 	int ngrp, error;
 
+#ifdef MAC
+	mac_cred_setgroups_enter();
+#endif
+
 	ngrp = *ngrpp;
 	/* Sanity check size. */
 	if (ngrp < 0 || ngrp > ngroups_max)
@@ -1332,11 +1376,17 @@ kern_setgroups(struct thread *td, int *ngrpp, gid_t *groups)
 	proc_set_cred(p, newcred);
 	PROC_UNLOCK(p);
 	crfree(oldcred);
+#ifdef MAC
+	mac_cred_setgroups_exit();
+#endif
 	return (0);
 
 fail:
 	PROC_UNLOCK(p);
 	crfree(newcred);
+#ifdef MAC
+	mac_cred_setgroups_exit();
+#endif
 	return (error);
 }
 
@@ -1355,6 +1405,10 @@ sys_setreuid(struct thread *td, struct setreuid_args *uap)
 	uid_t euid, ruid;
 	struct uidinfo *euip, *ruip;
 	int error;
+
+#ifdef MAC
+	mac_cred_setuid_enter();
+#endif
 
 	euid = uap->euid;
 	ruid = uap->ruid;
@@ -1405,6 +1459,9 @@ sys_setreuid(struct thread *td, struct setreuid_args *uap)
 	uifree(ruip);
 	uifree(euip);
 	crfree(oldcred);
+#ifdef MAC
+	mac_cred_setreuid_exit();
+#endif
 	return (0);
 
 fail:
@@ -1412,6 +1469,9 @@ fail:
 	uifree(ruip);
 	uifree(euip);
 	crfree(newcred);
+#ifdef MAC
+	mac_cred_setreuid_exit();
+#endif
 	return (error);
 }
 
@@ -1429,6 +1489,10 @@ sys_setregid(struct thread *td, struct setregid_args *uap)
 	struct ucred *newcred, *oldcred;
 	gid_t egid, rgid;
 	int error;
+
+#ifdef MAC
+	mac_cred_setregid_enter();
+#endif
 
 	egid = uap->egid;
 	rgid = uap->rgid;
@@ -1467,11 +1531,17 @@ sys_setregid(struct thread *td, struct setregid_args *uap)
 	proc_set_cred(p, newcred);
 	PROC_UNLOCK(p);
 	crfree(oldcred);
+#ifdef MAC
+	mac_cred_setregid_exit();
+#endif
 	return (0);
 
 fail:
 	PROC_UNLOCK(p);
 	crfree(newcred);
+#ifdef MAC
+	mac_cred_setregid_exit();
+#endif
 	return (error);
 }
 
@@ -1495,6 +1565,10 @@ sys_setresuid(struct thread *td, struct setresuid_args *uap)
 	uid_t euid, ruid, suid;
 	struct uidinfo *euip, *ruip;
 	int error;
+
+#ifdef MAC
+	mac_cred_setuid_enter();
+#endif
 
 	euid = uap->euid;
 	ruid = uap->ruid;
@@ -1551,6 +1625,9 @@ sys_setresuid(struct thread *td, struct setresuid_args *uap)
 	uifree(ruip);
 	uifree(euip);
 	crfree(oldcred);
+#ifdef MAC
+	mac_cred_setresuid_exit();
+#endif
 	return (0);
 
 fail:
@@ -1558,6 +1635,9 @@ fail:
 	uifree(ruip);
 	uifree(euip);
 	crfree(newcred);
+#ifdef MAC
+	mac_cred_setresuid_exit();
+#endif
 	return (error);
 
 }
@@ -1581,6 +1661,10 @@ sys_setresgid(struct thread *td, struct setresgid_args *uap)
 	struct ucred *newcred, *oldcred;
 	gid_t egid, rgid, sgid;
 	int error;
+
+#ifdef MAC
+	mac_cred_setresgid_enter();
+#endif
 
 	egid = uap->egid;
 	rgid = uap->rgid;
@@ -1625,11 +1709,17 @@ sys_setresgid(struct thread *td, struct setresgid_args *uap)
 	proc_set_cred(p, newcred);
 	PROC_UNLOCK(p);
 	crfree(oldcred);
+#ifdef MAC
+	mac_cred_setresgid_exit();
+#endif
 	return (0);
 
 fail:
 	PROC_UNLOCK(p);
 	crfree(newcred);
+#ifdef MAC
+	mac_cred_setresgid_exit();
+#endif
 	return (error);
 }
 

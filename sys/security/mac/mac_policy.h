@@ -148,20 +148,38 @@ typedef void	(*mpo_cred_setcred_enter_t)(void);
 typedef int	(*mpo_cred_check_setcred_t)(u_int flags,
 		    const struct ucred *old_cred, struct ucred *new_cred);
 typedef void	(*mpo_cred_setcred_exit_t)(void);
+typedef void (*mpo_cred_setegid_enter_t)(void);
 typedef int	(*mpo_cred_check_setegid_t)(struct ucred *cred, gid_t egid);
+typedef void (*mpo_cred_setegid_exit_t)(void);
+typedef void (*mpo_cred_seteuid_enter_t)(void);
 typedef int	(*mpo_cred_check_seteuid_t)(struct ucred *cred, uid_t euid);
+typedef void (*mpo_cred_seteuid_exit_t)(void);
+typedef void (*mpo_cred_setgid_enter_t)(void);
 typedef int	(*mpo_cred_check_setgid_t)(struct ucred *cred, gid_t gid);
+typedef void (*mpo_cred_setgid_exit_t)(void);
+typedef void (*mpo_cred_setgroups_enter_t)(void);
 typedef int	(*mpo_cred_check_setgroups_t)(struct ucred *cred, int ngroups,
 		    gid_t *gidset);
+typedef void (*mpo_cred_setgroups_exit_t)(void);
+typedef void (*mpo_cred_setregid_enter_t)(void);
 typedef int	(*mpo_cred_check_setregid_t)(struct ucred *cred, gid_t rgid,
 		    gid_t egid);
+typedef void (*mpo_cred_setregid_exit_t)(void);
+typedef void (*mpo_cred_setresgid_enter_t)(void);
 typedef int	(*mpo_cred_check_setresgid_t)(struct ucred *cred, gid_t rgid,
 		    gid_t egid, gid_t sgid);
+typedef void (*mpo_cred_setresgid_exit_t)(void);
+typedef void (*mpo_cred_setresuid_enter_t)(void);
 typedef int	(*mpo_cred_check_setresuid_t)(struct ucred *cred, uid_t ruid,
 		    uid_t euid, uid_t suid);
+typedef void (*mpo_cred_setresuid_exit_t)(void);
+typedef void (*mpo_cred_setreuid_enter_t)(void);
 typedef int	(*mpo_cred_check_setreuid_t)(struct ucred *cred, uid_t ruid,
 		    uid_t euid);
+typedef void (*mpo_cred_setreuid_exit_t)(void);
+typedef void (*mpo_cred_setuid_enter_t)(void);
 typedef int	(*mpo_cred_check_setuid_t)(struct ucred *cred, uid_t uid);
+typedef void (*mpo_cred_setuid_exit_t)(void);
 typedef int	(*mpo_cred_check_visible_t)(struct ucred *cr1,
 		    struct ucred *cr2);
 typedef void	(*mpo_cred_copy_label_t)(struct label *src,
@@ -727,15 +745,33 @@ struct mac_policy_ops {
 	mpo_cred_setcred_enter_t		mpo_cred_setcred_enter;
 	mpo_cred_check_setcred_t		mpo_cred_check_setcred;
 	mpo_cred_setcred_exit_t			mpo_cred_setcred_exit;
+	mpo_cred_setuid_enter_t			mpo_cred_setuid_enter;
 	mpo_cred_check_setuid_t			mpo_cred_check_setuid;
+	mpo_cred_setuid_exit_t			mpo_cred_setuid_exit;
+	mpo_cred_seteuid_enter_t		mpo_cred_seteuid_enter;
 	mpo_cred_check_seteuid_t		mpo_cred_check_seteuid;
+	mpo_cred_seteuid_exit_t			mpo_cred_seteuid_exit;
+	mpo_cred_setgid_enter_t			mpo_cred_setgid_enter;
 	mpo_cred_check_setgid_t			mpo_cred_check_setgid;
+	mpo_cred_setgid_exit_t			mpo_cred_setgid_exit;
+	mpo_cred_setegid_enter_t		mpo_cred_setegid_enter;
 	mpo_cred_check_setegid_t		mpo_cred_check_setegid;
+	mpo_cred_setegid_exit_t			mpo_cred_setegid_exit;
+	mpo_cred_setgroups_enter_t		mpo_cred_setgroups_enter;
 	mpo_cred_check_setgroups_t		mpo_cred_check_setgroups;
+	mpo_cred_setgroups_exit_t		mpo_cred_setgroups_exit;
+	mpo_cred_setreuid_enter_t		mpo_cred_setreuid_enter;
 	mpo_cred_check_setreuid_t		mpo_cred_check_setreuid;
+	mpo_cred_setreuid_exit_t		mpo_cred_setreuid_exit;
+	mpo_cred_setregid_enter_t		mpo_cred_setregid_enter;
 	mpo_cred_check_setregid_t		mpo_cred_check_setregid;
+	mpo_cred_setregid_exit_t		mpo_cred_setregid_exit;
+	mpo_cred_setresuid_enter_t		mpo_cred_setresuid_enter;
 	mpo_cred_check_setresuid_t		mpo_cred_check_setresuid;
+	mpo_cred_setresuid_exit_t		mpo_cred_setresuid_exit;
+	mpo_cred_setresgid_enter_t		mpo_cred_setresgid_enter;
 	mpo_cred_check_setresgid_t		mpo_cred_check_setresgid;
+	mpo_cred_setresgid_exit_t		mpo_cred_setresgid_exit;
 	mpo_cred_check_visible_t		mpo_cred_check_visible;
 	mpo_cred_copy_label_t			mpo_cred_copy_label;
 	mpo_cred_create_swapper_t		mpo_cred_create_swapper;

@@ -1883,18 +1883,15 @@ grant_supplementary_group_from_flags(const flags_t flags)
 }
 
 static int
-rule_grant_supplementary_groups(const struct rule *const rule,
-    const struct ucred *const old_cred, const struct ucred *const new_cred)
+rule_grant_setgroups(const struct rule *const rule,
+    const struct ucred *const old_cred, const int ngroups,
+    const gid_t *const groups)
 {
-	const gid_t *const old_groups = old_cred->cr_groups;
-	const gid_t *const new_groups = new_cred->cr_groups;
-	const int old_ngroups = old_cred->cr_ngroups;
-	const int new_ngroups = new_cred->cr_ngroups;
 	const flags_t gid_flags = rule->gid_flags;
 	const bool current_has_supp = (gid_flags & MDF_CURRENT) != 0 &&
 	    (gid_flags & MDF_SUPP_MASK) != 0;
 	id_nb_t rule_idx = 0;
-	int old_idx = 1, new_idx = 1;
+	int old_idx = 1, new_idx = 0;
 
 	if ((gid_flags & MDF_ANY_SUPP) != 0 &&
 	    (gid_flags & MDF_MAY_REJ_SUPP) == 0)
@@ -1904,8 +1901,8 @@ rule_grant_supplementary_groups(const struct rule *const rule,
 		 */
 		return (0);
 
-	for (; new_idx < new_ngroups; ++new_idx) {
-		const gid_t gid = new_groups[new_idx];
+	for (; new_idx < ngroups; ++new_idx) {
+		const gid_t gid = groups[new_idx];
 		bool may_accept = false;
 
 		if ((gid_flags & MDF_ANY_SUPP) != 0)
@@ -1919,8 +1916,8 @@ rule_grant_supplementary_groups(const struct rule *const rule,
 			 * on absence of MDF_SUPP_MUST doesn't seem worth it in
 			 * practice.
 			 */
-			for (; old_idx < old_ngroups; ++old_idx) {
-				const gid_t old_gid = old_groups[old_idx];
+			for (; old_idx < old_cred->cr_ngroups; ++old_idx) {
+				const gid_t old_gid = old_cred->cr_groups[old_idx];
 
 				if (old_gid < gid) {
 					/* Mandatory but absent. */
@@ -1945,9 +1942,9 @@ rule_grant_supplementary_groups(const struct rule *const rule,
 					}
 					++old_idx;
 					break;
-				}
-				else
+				} else {
 					break;
+				}
 			}
 		}
 
@@ -1987,12 +1984,11 @@ rule_grant_supplementary_groups(const struct rule *const rule,
 				}
 				++rule_idx;
 				break;
-			}
-			else
+			} else {
 				break;
+			}
 		}
 
-		/* 'gid' wasn't explicitly accepted. */
 		if (!may_accept)
 			return (EPERM);
 	}
@@ -2005,8 +2001,9 @@ rule_grant_supplementary_groups(const struct rule *const rule,
 	 */
 	if ((gid_flags & MDF_CURRENT) != 0 &&
 	    (gid_flags & MDF_SUPP_MUST) != 0 &&
-	    old_idx < old_ngroups)
+	    old_idx < old_cred->cr_ngroups)
 		return (EPERM);
+
 	/*
 	 * Similarly, we have to finish browsing all GIDs from the rule
 	 * in case some are marked mandatory.
@@ -2021,6 +2018,16 @@ rule_grant_supplementary_groups(const struct rule *const rule,
 	}
 
 	return (0);
+}
+
+static int
+rule_grant_supplementary_groups(const struct rule *const rule,
+		const struct ucred *const old_cred, const struct ucred *const new_cred)
+{
+	const int supp_ngroups = old_cred->cr_ngroups;
+	const gid_t *supp_groups = (supp_ngroups > 0) ? &new_cred->cr_groups[1] : NULL;
+
+	return (rule_grant_setgroups(rule, old_cred, supp_ngroups, supp_groups));
 }
 
 static int
@@ -2172,59 +2179,154 @@ struct mac_do_setcred_data {
 	u_int setcred_flags;
 };
 
+struct mac_do_setuid_data {
+	struct mac_do_data_header hdr;
+	uid_t target_uid;
+};
+
+struct mac_do_setgid_data {
+	struct mac_do_data_header hdr;
+	gid_t target_gid;
+};
+
+struct mac_do_setgroups_data {
+	struct mac_do_data_header hdr;
+	int ngroups;
+	gid_t *groups;
+};
+
 static int
 mac_do_priv_grant(struct ucred *cred, int priv)
 {
-	struct mac_do_setcred_data *const data = fetch_data();
-	struct rules *rules;
-	const struct ucred *new_cred;
-	const struct rule *rule;
-	u_int setcred_flags;
-	int error;
-
 	/* Bail out fast if we aren't concerned. */
-	if (priv != PRIV_CRED_SETCRED)
-		return (EPERM);
+	switch (priv) {
+		case PRIV_CRED_SETCRED: {
+			struct mac_do_setcred_data *const data = fetch_data();
+			struct rules *rules;
+			const struct ucred *new_cred;
+			const struct rule *rule;
+			u_int setcred_flags;
+			int error;
+			/*
+			 * Do we have to do something?
+			 */
+			if (check_data_usable(data, sizeof(*data), priv) != 0)
+				/* No. */
+				return (EPERM);
 
-	/*
-	 * Do we have to do something?
-	 */
-	if (check_data_usable(data, sizeof(*data), priv) != 0)
-		/* No. */
-		return (EPERM);
+			rules = &data->hdr.conf->rules;
+			new_cred = data->new_cred;
+			KASSERT(new_cred != NULL,
+				("priv_check*() called before mac_cred_check_setcred()"));
+			setcred_flags = data->setcred_flags;
 
-	rules = &data->hdr.conf->rules;
-	new_cred = data->new_cred;
-	KASSERT(new_cred != NULL,
-	    ("priv_check*() called before mac_cred_check_setcred()"));
-	setcred_flags = data->setcred_flags;
+			/*
+			 * Explicitly check that only the flags we currently support are present
+			 * in order to avoid accepting transitions with other changes than those
+			 * we are actually going to check.  Currently, this rules out the
+			 * SETCREDF_MAC_LABEL flag.  This may be improved by adding code
+			 * actually checking whether the requested label and the current one
+			 * would differ.
+			 */
+			if ((setcred_flags & ~(SETCREDF_UID | SETCREDF_RUID | SETCREDF_SVUID |
+				SETCREDF_GID | SETCREDF_RGID | SETCREDF_SVGID |
+				SETCREDF_SUPP_GROUPS)) != 0)
+				return (EPERM);
 
-	/*
-	 * Explicitly check that only the flags we currently support are present
-	 * in order to avoid accepting transitions with other changes than those
-	 * we are actually going to check.  Currently, this rules out the
-	 * SETCREDF_MAC_LABEL flag.  This may be improved by adding code
-	 * actually checking whether the requested label and the current one
-	 * would differ.
-	 */
-	if ((setcred_flags & ~(SETCREDF_UID | SETCREDF_RUID | SETCREDF_SVUID |
-	    SETCREDF_GID | SETCREDF_RGID | SETCREDF_SVGID |
-	    SETCREDF_SUPP_GROUPS)) != 0)
-		return (EPERM);
+			/*
+			 * Browse rules, and for those that match the requestor, call specific
+			 * privilege granting functions interpreting the "to"/"target" part.
+			 */
+			error = EPERM;
+			STAILQ_FOREACH(rule, &rules->head, r_entries)
+				if (rule_applies(rule, cred)) {
+					error = rule_grant_setcred(rule, cred, new_cred);
+					if (error != EPERM)
+						break;
+				}
 
-	/*
-	 * Browse rules, and for those that match the requestor, call specific
-	 * privilege granting functions interpreting the "to"/"target" part.
-	 */
-	error = EPERM;
-	STAILQ_FOREACH(rule, &rules->head, r_entries)
-	    if (rule_applies(rule, cred)) {
-		    error = rule_grant_setcred(rule, cred, new_cred);
-		    if (error != EPERM)
-			    break;
-	    }
+			return (error);
+		}
 
-	return (error);
+		case PRIV_CRED_SETUID:
+		case PRIV_CRED_SETEUID:
+		case PRIV_CRED_SETREUID:
+		case PRIV_CRED_SETRESUID: {
+			struct mac_do_setuid_data *data = fetch_data();
+			struct rules *rules;
+			struct rule *rule;
+			int error;
+
+			if (check_data_usable(data, sizeof(*data), priv) != 0)
+				return (EPERM);
+
+			rules = &data->hdr.conf->rules;
+
+			error = EPERM;
+			STAILQ_FOREACH(rule, &rules->head, r_entries)
+				if (rule_applies(rule, cred)) {
+					error = rule_grant_user(rule, cred, data->target_uid);
+					if (error != EPERM)
+						break;
+				}
+
+			return (error);
+		}
+
+		case PRIV_CRED_SETGID:
+		case PRIV_CRED_SETEGID:
+		case PRIV_CRED_SETREGID:
+		case PRIV_CRED_SETRESGID: {
+			struct mac_do_setgid_data *data = fetch_data();
+			struct rules *rules;
+			struct rule *rule;
+			int error;
+
+			if (check_data_usable(data, sizeof(*data), priv) != 0)
+				return (EPERM);
+
+			rules = &data->hdr.conf->rules;
+
+			error = EPERM;
+			STAILQ_FOREACH(rule, &rules->head, r_entries)
+				if (rule_applies(rule, cred)) {
+					error = rule_grant_primary_group(rule, cred, data->target_gid);
+					if (error != EPERM)
+						break;
+				}
+
+			return (error);
+		}
+
+		case PRIV_CRED_SETGROUPS: {
+			struct mac_do_setgroups_data *data = fetch_data();
+			struct rules *rules;
+			struct rule *rule;
+			int error;
+
+			if (check_data_usable(data, sizeof(*data), priv) != 0)
+				return (EPERM);
+
+			rules = &data->hdr.conf->rules;
+
+			if (data->ngroups < 0 || data->groups == NULL)
+				return (EPERM);
+
+			error = EPERM;
+			STAILQ_FOREACH(rule, &rules->head, r_entries)
+				if (rule_applies(rule, cred)) {
+					error = rule_grant_setgroups(rule, cred,
+							data->ngroups, data->groups);
+					if (error != EPERM)
+						break;
+				}
+
+			return (error);
+		}
+
+		default:
+			return (EPERM);
+	}
 }
 
 static int
@@ -2355,6 +2457,473 @@ mac_do_setcred_exit(void)
 }
 
 static void
+mac_do_setuid_enter(void)
+{
+	struct prison *pr;
+	struct mac_do_setuid_data *data;
+	struct conf *conf;
+	int error;
+
+	if (do_enabled == 0)
+		return;
+
+	error = check_proc();
+	if (error != 0)
+		return;
+
+	conf = find_conf(curproc->p_ucred->cr_prison, &pr);
+	hold_conf(conf);
+	prison_unlock(pr);
+
+	data = fetch_data();
+	if (!is_data_reusable(data, sizeof(*data)))
+		data = alloc_data(data, sizeof(*data));
+	set_data_header(data, sizeof(*data), PRIV_CRED_SETUID, conf);
+
+	data->target_uid = (uid_t)-1;
+}
+
+static int
+mac_do_check_setuid(struct ucred *cred, uid_t uid)
+{
+	struct mac_do_setuid_data *const data = fetch_data();
+
+	if (check_data_usable(data, sizeof(*data), PRIV_CRED_SETUID) != 0)
+		return (0);
+
+	data->target_uid = uid;
+
+	return (0);
+}
+
+static void
+mac_do_setuid_exit(void)
+{
+	struct mac_do_setuid_data *const data = fetch_data();
+
+	if (check_data_usable(data, sizeof(*data), PRIV_CRED_SETUID) == 0)
+		clear_data(data);
+}
+
+static void
+mac_do_seteuid_enter(void)
+{
+	struct prison *pr;
+	struct mac_do_setuid_data *data;
+	struct conf *conf;
+	int error;
+
+	if (do_enabled == 0)
+		return;
+
+	error = check_proc();
+	if (error != 0)
+		return;
+
+	conf = find_conf(curproc->p_ucred->cr_prison, &pr);
+	hold_conf(conf);
+	prison_unlock(pr);
+
+	data = fetch_data();
+	if (!is_data_reusable(data, sizeof(*data)))
+		data = alloc_data(data, sizeof(*data));
+	set_data_header(data, sizeof(*data), PRIV_CRED_SETEUID, conf);
+
+	data->target_uid = (uid_t)-1;
+}
+
+static int
+mac_do_check_seteuid(struct ucred *cred, uid_t euid)
+{
+	struct mac_do_setuid_data *const data = fetch_data();
+
+	if (check_data_usable(data, sizeof(*data), PRIV_CRED_SETEUID) != 0)
+		return (0);
+
+	data->target_uid = euid;
+
+	return (0);
+}
+
+static void
+mac_do_seteuid_exit(void)
+{
+	struct mac_do_setuid_data *const data = fetch_data();
+
+	if (check_data_usable(data, sizeof(*data), PRIV_CRED_SETEUID) == 0)
+		clear_data(data);
+}
+
+static void
+mac_do_setreuid_enter(void)
+{
+	struct prison *pr;
+	struct mac_do_setuid_data *data;
+	struct conf *conf;
+	int error;
+
+	if (do_enabled == 0)
+		return;
+
+	error = check_proc();
+	if (error != 0)
+		return;
+
+	conf = find_conf(curproc->p_ucred->cr_prison, &pr);
+	hold_conf(conf);
+	prison_unlock(pr);
+
+	data = fetch_data();
+	if (!is_data_reusable(data, sizeof(*data)))
+		data = alloc_data(data, sizeof(*data));
+	set_data_header(data, sizeof(*data), PRIV_CRED_SETREUID, conf);
+
+	data->target_uid = (uid_t)-1;
+}
+
+static int
+mac_do_check_setreuid(struct ucred *cred, uid_t ruid, uid_t euid)
+{
+	struct mac_do_setuid_data *const data = fetch_data();
+
+	if (check_data_usable(data, sizeof(*data), PRIV_CRED_SETREUID) != 0)
+		return (0);
+
+	if (euid != (uid_t)-1)
+		data->target_uid = euid;
+	else if (ruid != (uid_t)-1)
+		data->target_uid = ruid;
+	else
+		data->target_uid = cred->cr_uid;
+
+	return (0);
+}
+
+static void
+mac_do_setreuid_exit(void)
+{
+	struct mac_do_setuid_data *const data = fetch_data();
+
+	if (check_data_usable(data, sizeof(*data), PRIV_CRED_SETREUID) == 0)
+		clear_data(data);
+}
+
+static void
+mac_do_setresuid_enter(void)
+{
+	struct prison *pr;
+	struct mac_do_setuid_data *data;
+	struct conf *conf;
+	int error;
+
+	if (do_enabled == 0)
+		return;
+
+	error = check_proc();
+	if (error != 0)
+		return;
+
+	conf = find_conf(curproc->p_ucred->cr_prison, &pr);
+	hold_conf(conf);
+	prison_unlock(pr);
+
+	data = fetch_data();
+	if (!is_data_reusable(data, sizeof(*data)))
+		data = alloc_data(data, sizeof(*data));
+	set_data_header(data, sizeof(*data), PRIV_CRED_SETRESUID, conf);
+
+	data->target_uid = (uid_t)-1;
+}
+
+static int
+mac_do_check_setresuid(struct ucred *cred, uid_t ruid, uid_t euid, uid_t suid)
+{
+	struct mac_do_setuid_data *const data = fetch_data();
+
+	if (check_data_usable(data, sizeof(*data), PRIV_CRED_SETRESUID) != 0)
+		return (0);
+
+	if (euid != (uid_t)-1)
+		data->target_uid = euid;
+	else if (ruid != (uid_t)-1)
+		data->target_uid = ruid;
+	else if (suid != (uid_t)-1)
+		data->target_uid = suid;
+	else
+		data->target_uid = cred->cr_uid;
+
+	return (0);
+}
+
+static void
+mac_do_setresuid_exit(void)
+{
+	struct mac_do_setuid_data *const data = fetch_data();
+
+	if (check_data_usable(data, sizeof(*data), PRIV_CRED_SETRESUID) == 0)
+		clear_data(data);
+}
+
+static void
+mac_do_setgid_enter(void)
+{
+	struct prison *pr;
+	struct mac_do_setgid_data *data;
+	struct conf *conf;
+	int error;
+
+	if (do_enabled == 0)
+		return;
+
+	error = check_proc();
+	if (error != 0)
+		return;
+
+	conf = find_conf(curproc->p_ucred->cr_prison, &pr);
+	hold_conf(conf);
+	prison_unlock(pr);
+
+	data = fetch_data();
+	if (!is_data_reusable(data, sizeof(*data)))
+		data = alloc_data(data, sizeof(*data));
+	set_data_header(data, sizeof(*data), PRIV_CRED_SETGID, conf);
+
+	data->target_gid = (gid_t)-1;
+}
+
+static int
+mac_do_check_setgid(struct ucred *cred, uid_t gid)
+{
+	struct mac_do_setgid_data *const data = fetch_data();
+
+	if (check_data_usable(data, sizeof(*data), PRIV_CRED_SETUID) != 0)
+		return (0);
+
+	data->target_gid = gid;
+
+	return (0);
+}
+
+static void
+mac_do_setgid_exit(void)
+{
+	struct mac_do_setgid_data *const data = fetch_data();
+
+	if (check_data_usable(data, sizeof(*data), PRIV_CRED_SETGID) == 0)
+		clear_data(data);
+}
+
+static void
+mac_do_setegid_enter(void)
+{
+	struct prison *pr;
+	struct mac_do_setgid_data *data;
+	struct conf *conf;
+	int error;
+
+	if (do_enabled == 0)
+		return;
+
+	error = check_proc();
+	if (error != 0)
+		return;
+
+	conf = find_conf(curproc->p_ucred->cr_prison, &pr);
+	hold_conf(conf);
+	prison_unlock(pr);
+
+	data = fetch_data();
+	if (!is_data_reusable(data, sizeof(*data)))
+		data = alloc_data(data, sizeof(*data));
+	set_data_header(data, sizeof(*data), PRIV_CRED_SETEGID, conf);
+
+	data->target_gid = (gid_t)-1;
+}
+
+static int
+mac_do_check_setegid(struct ucred *cred, uid_t egid)
+{
+	struct mac_do_setgid_data *const data = fetch_data();
+
+	if (check_data_usable(data, sizeof(*data), PRIV_CRED_SETEGID) != 0)
+		return (0);
+
+	data->target_gid = egid;
+
+	return (0);
+}
+
+static void
+mac_do_setegid_exit(void)
+{
+	struct mac_do_setgid_data *const data = fetch_data();
+
+	if (check_data_usable(data, sizeof(*data), PRIV_CRED_SETEGID) == 0)
+		clear_data(data);
+}
+
+static void
+mac_do_setregid_enter(void)
+{
+	struct prison *pr;
+	struct mac_do_setgid_data *data;
+	struct conf *conf;
+	int error;
+
+	if (do_enabled == 0)
+		return;
+
+	error = check_proc();
+	if (error != 0)
+		return;
+
+	conf = find_conf(curproc->p_ucred->cr_prison, &pr);
+	hold_conf(conf);
+	prison_unlock(pr);
+
+	data = fetch_data();
+	if (!is_data_reusable(data, sizeof(*data)))
+		data = alloc_data(data, sizeof(*data));
+	set_data_header(data, sizeof(*data), PRIV_CRED_SETREGID, conf);
+
+	data->target_gid = (gid_t)-1;
+}
+
+static int
+mac_do_check_setregid(struct ucred *cred, gid_t rgid, gid_t egid)
+{
+	struct mac_do_setgid_data *const data = fetch_data();
+
+	if (check_data_usable(data, sizeof(*data), PRIV_CRED_SETREGID) != 0)
+		return (0);
+
+	if (egid != (gid_t)-1)
+		data->target_gid = egid;
+	else if (rgid != (gid_t)-1)
+		data->target_gid = rgid;
+	else
+		data->target_gid = cred->cr_gid;
+
+	return (0);
+}
+
+static void
+mac_do_setregid_exit(void)
+{
+	struct mac_do_setgid_data *const data = fetch_data();
+
+	if (check_data_usable(data, sizeof(*data), PRIV_CRED_SETREGID) == 0)
+		clear_data(data);
+}
+
+static void
+mac_do_setresgid_enter(void)
+{
+	struct prison *pr;
+	struct mac_do_setgid_data *data;
+	struct conf *conf;
+	int error;
+
+	if (do_enabled == 0)
+		return;
+
+	error = check_proc();
+	if (error != 0)
+		return;
+
+	conf = find_conf(curproc->p_ucred->cr_prison, &pr);
+	hold_conf(conf);
+	prison_unlock(pr);
+
+	data = fetch_data();
+	if (!is_data_reusable(data, sizeof(*data)))
+		data = alloc_data(data, sizeof(*data));
+	set_data_header(data, sizeof(*data), PRIV_CRED_SETRESGID, conf);
+
+	data->target_gid = (gid_t)-1;
+}
+
+static int
+mac_do_check_setresgid(struct ucred *cred, gid_t rgid, gid_t egid, gid_t sgid)
+{
+	struct mac_do_setgid_data *const data = fetch_data();
+
+	if (check_data_usable(data, sizeof(*data), PRIV_CRED_SETRESGID) != 0)
+		return (0);
+
+	if (egid != (gid_t)-1)
+		data->target_gid = egid;
+	else if (rgid != (uid_t)-1)
+		data->target_gid = rgid;
+	else if (sgid != (uid_t)-1)
+		data->target_gid = sgid;
+	else
+		data->target_gid = cred->cr_gid;
+
+	return (0);
+}
+
+static void
+mac_do_setresgid_exit(void)
+{
+	struct mac_do_setgid_data *const data = fetch_data();
+
+	if (check_data_usable(data, sizeof(*data), PRIV_CRED_SETRESGID) == 0)
+		clear_data(data);
+}
+
+static void
+mac_do_setgroups_enter(void)
+{
+	struct prison *pr;
+	struct mac_do_setgroups_data *data;
+	struct conf *conf;
+	int error;
+
+	if (do_enabled == 0)
+		return;
+
+	error = check_proc();
+	if (error != 0)
+		return;
+
+	conf = find_conf(curproc->p_ucred->cr_prison, &pr);
+	hold_conf(conf);
+	prison_unlock(pr);
+
+	data = fetch_data();
+	if (!is_data_reusable(data, sizeof(*data)))
+		data = alloc_data(data, sizeof(*data));
+	set_data_header(data, sizeof(*data), PRIV_CRED_SETGROUPS, conf);
+
+	data->ngroups = -1;
+	data->groups = NULL;
+}
+
+static int
+mac_do_check_setgroups(struct ucred *cred, int ngroups, gid_t *gidset)
+{
+	struct mac_do_setgroups_data *const data = fetch_data();
+
+	if (check_data_usable(data, sizeof(*data), PRIV_CRED_SETGROUPS) != 0)
+		return (0);
+
+	data->ngroups = ngroups;
+	data->groups = gidset;
+
+	return (0);
+}
+
+static void
+mac_do_setgroups_exit(void)
+{
+	struct mac_do_setgid_data *const data = fetch_data();
+
+	if (check_data_usable(data, sizeof(*data), PRIV_CRED_SETGROUPS) == 0)
+		clear_data(data);
+}
+
+static void
 mac_do_init(struct mac_policy_conf *mpc)
 {
 	struct prison *pr;
@@ -2383,9 +2952,47 @@ mac_do_destroy(struct mac_policy_conf *mpc)
 static struct mac_policy_ops do_ops = {
 	.mpo_init = mac_do_init,
 	.mpo_destroy = mac_do_destroy,
+
 	.mpo_cred_setcred_enter = mac_do_setcred_enter,
 	.mpo_cred_check_setcred = mac_do_check_setcred,
 	.mpo_cred_setcred_exit = mac_do_setcred_exit,
+
+	.mpo_cred_setuid_enter = mac_do_setuid_enter,
+	.mpo_cred_check_setuid = mac_do_check_setuid,
+	.mpo_cred_setuid_exit = mac_do_setuid_exit,
+
+	.mpo_cred_seteuid_enter = mac_do_seteuid_enter,
+	.mpo_cred_check_seteuid = mac_do_check_seteuid,
+	.mpo_cred_seteuid_exit = mac_do_seteuid_exit,
+
+	.mpo_cred_setreuid_enter = mac_do_setreuid_enter,
+	.mpo_cred_check_setreuid = mac_do_check_setreuid,
+	.mpo_cred_setreuid_exit = mac_do_setreuid_exit,
+
+	.mpo_cred_setresuid_enter = mac_do_setresuid_enter,
+	.mpo_cred_check_setresuid = mac_do_check_setresuid,
+	.mpo_cred_setresuid_exit = mac_do_setresuid_exit,
+
+	.mpo_cred_setgid_enter = mac_do_setgid_enter,
+	.mpo_cred_check_setgid = mac_do_check_setgid,
+	.mpo_cred_setgid_exit = mac_do_setgid_exit,
+
+	.mpo_cred_setegid_enter = mac_do_setegid_enter,
+	.mpo_cred_check_setegid = mac_do_check_setegid,
+	.mpo_cred_setegid_exit = mac_do_setegid_exit,
+
+	.mpo_cred_setregid_enter = mac_do_setregid_enter,
+	.mpo_cred_check_setregid = mac_do_check_setregid,
+	.mpo_cred_setregid_exit = mac_do_setregid_exit,
+
+	.mpo_cred_setresgid_enter = mac_do_setresgid_enter,
+	.mpo_cred_check_setresgid = mac_do_check_setresgid,
+	.mpo_cred_setresgid_exit = mac_do_setresgid_exit,
+
+	.mpo_cred_setgroups_enter = mac_do_setgroups_enter,
+	.mpo_cred_check_setgroups = mac_do_check_setgroups,
+	.mpo_cred_setgroups_exit = mac_do_setgroups_exit,
+
 	.mpo_priv_grant = mac_do_priv_grant,
 };
 
