@@ -1891,7 +1891,7 @@ rule_grant_setgroups(const struct rule *const rule,
 	const bool current_has_supp = (gid_flags & MDF_CURRENT) != 0 &&
 	    (gid_flags & MDF_SUPP_MASK) != 0;
 	id_nb_t rule_idx = 0;
-	int old_idx = 1, new_idx = 0;
+	int old_idx = 0, new_idx = 0;
 
 	if ((gid_flags & MDF_ANY_SUPP) != 0 &&
 	    (gid_flags & MDF_MAY_REJ_SUPP) == 0)
@@ -1942,9 +1942,8 @@ rule_grant_setgroups(const struct rule *const rule,
 					}
 					++old_idx;
 					break;
-				} else {
+				} else
 					break;
-				}
 			}
 		}
 
@@ -1984,11 +1983,11 @@ rule_grant_setgroups(const struct rule *const rule,
 				}
 				++rule_idx;
 				break;
-			} else {
+			} else
 				break;
-			}
 		}
 
+		/* 'gid' wasn't explicitly accepted */
 		if (!may_accept)
 			return (EPERM);
 	}
@@ -2024,10 +2023,7 @@ static int
 rule_grant_supplementary_groups(const struct rule *const rule,
 		const struct ucred *const old_cred, const struct ucred *const new_cred)
 {
-	const int supp_ngroups = old_cred->cr_ngroups;
-	const gid_t *supp_groups = (supp_ngroups > 0) ? &new_cred->cr_groups[1] : NULL;
-
-	return (rule_grant_setgroups(rule, old_cred, supp_ngroups, supp_groups));
+	return (rule_grant_setgroups(rule, old_cred, old_cred->cr_ngroups, new_cred->cr_groups));
 }
 
 static int
@@ -2196,133 +2192,154 @@ struct mac_do_setgroups_data {
 };
 
 static int
+priv_grant_setcred(struct ucred *cred, int priv)
+{
+	struct mac_do_setcred_data *const data = fetch_data();
+	struct rules *rules;
+	const struct ucred *new_cred;
+	const struct rule *rule;
+	u_int setcred_flags;
+	int error;
+	/*
+	 * Do we have to do something?
+	 */
+	if (check_data_usable(data, sizeof(*data), priv) != 0)
+		/* No. */
+		return (EPERM);
+
+	rules = &data->hdr.conf->rules;
+	new_cred = data->new_cred;
+	KASSERT(new_cred != NULL,
+		("priv_check*() called before mac_cred_check_setcred()"));
+	setcred_flags = data->setcred_flags;
+
+	/*
+	 * Explicitly check that only the flags we currently support are present
+	 * in order to avoid accepting transitions with other changes than those
+	 * we are actually going to check.  Currently, this rules out the
+	 * SETCREDF_MAC_LABEL flag.  This may be improved by adding code
+	 * actually checking whether the requested label and the current one
+	 * would differ.
+	 */
+	if ((setcred_flags & ~(SETCREDF_UID | SETCREDF_RUID | SETCREDF_SVUID |
+		SETCREDF_GID | SETCREDF_RGID | SETCREDF_SVGID |
+		SETCREDF_SUPP_GROUPS)) != 0)
+		return (EPERM);
+
+	/*
+	 * Browse rules, and for those that match the requestor, call specific
+	 * privilege granting functions interpreting the "to"/"target" part.
+	 */
+	error = EPERM;
+	STAILQ_FOREACH(rule, &rules->head, r_entries)
+		if (rule_applies(rule, cred)) {
+			error = rule_grant_setcred(rule, cred, new_cred);
+			if (error != EPERM)
+				break;
+		}
+
+	return (error);
+}
+
+static int
+priv_grant_user(struct ucred *cred, int priv)
+{
+	struct mac_do_setuid_data *data = fetch_data();
+	struct rules *rules;
+	struct rule *rule;
+	int error;
+
+	if (check_data_usable(data, sizeof(*data), priv) != 0)
+		return (EPERM);
+
+	rules = &data->hdr.conf->rules;
+
+	error = EPERM;
+	STAILQ_FOREACH(rule, &rules->head, r_entries)
+		if (rule_applies(rule, cred)) {
+			error = rule_grant_user(rule, cred, data->target_uid);
+			if (error != EPERM)
+				break;
+		}
+
+	return (error);
+}
+
+static int
+priv_grant_group(struct ucred *cred, int priv)
+{
+	struct mac_do_setgid_data *data = fetch_data();
+	struct rules *rules;
+	struct rule *rule;
+	int error;
+
+	if (check_data_usable(data, sizeof(*data), priv) != 0)
+		return (EPERM);
+
+	rules = &data->hdr.conf->rules;
+
+	error = EPERM;
+	STAILQ_FOREACH(rule, &rules->head, r_entries)
+		if (rule_applies(rule, cred)) {
+			error = rule_grant_primary_group(rule, cred,
+				data->target_gid);
+			if (error != EPERM)
+				break;
+		}
+
+	return (error);
+}
+
+static int
+priv_grant_groups(struct ucred *cred, int priv)
+{
+	struct mac_do_setgroups_data *data = fetch_data();
+	struct rules *rules;
+	struct rule *rule;
+	int error;
+
+	if (check_data_usable(data, sizeof(*data), priv) != 0)
+		return (EPERM);
+
+	rules = &data->hdr.conf->rules;
+
+	if (data->ngroups < 0 || data->groups == NULL)
+		return (EPERM);
+
+	error = EPERM;
+	STAILQ_FOREACH(rule, &rules->head, r_entries)
+		if (rule_applies(rule, cred)) {
+			error = rule_grant_setgroups(rule, cred,
+				data->ngroups, data->groups);
+			if (error != EPERM)
+				break;
+		}
+
+	return (error);
+}
+
+static int
 mac_do_priv_grant(struct ucred *cred, int priv)
 {
 	/* Bail out fast if we aren't concerned. */
 	switch (priv) {
-		case PRIV_CRED_SETCRED: {
-			struct mac_do_setcred_data *const data = fetch_data();
-			struct rules *rules;
-			const struct ucred *new_cred;
-			const struct rule *rule;
-			u_int setcred_flags;
-			int error;
-			/*
-			 * Do we have to do something?
-			 */
-			if (check_data_usable(data, sizeof(*data), priv) != 0)
-				/* No. */
-				return (EPERM);
-
-			rules = &data->hdr.conf->rules;
-			new_cred = data->new_cred;
-			KASSERT(new_cred != NULL,
-				("priv_check*() called before mac_cred_check_setcred()"));
-			setcred_flags = data->setcred_flags;
-
-			/*
-			 * Explicitly check that only the flags we currently support are present
-			 * in order to avoid accepting transitions with other changes than those
-			 * we are actually going to check.  Currently, this rules out the
-			 * SETCREDF_MAC_LABEL flag.  This may be improved by adding code
-			 * actually checking whether the requested label and the current one
-			 * would differ.
-			 */
-			if ((setcred_flags & ~(SETCREDF_UID | SETCREDF_RUID | SETCREDF_SVUID |
-				SETCREDF_GID | SETCREDF_RGID | SETCREDF_SVGID |
-				SETCREDF_SUPP_GROUPS)) != 0)
-				return (EPERM);
-
-			/*
-			 * Browse rules, and for those that match the requestor, call specific
-			 * privilege granting functions interpreting the "to"/"target" part.
-			 */
-			error = EPERM;
-			STAILQ_FOREACH(rule, &rules->head, r_entries)
-				if (rule_applies(rule, cred)) {
-					error = rule_grant_setcred(rule, cred, new_cred);
-					if (error != EPERM)
-						break;
-				}
-
-			return (error);
-		}
+		case PRIV_CRED_SETCRED:
+			return (priv_grant_setcred(cred, priv));
 
 		case PRIV_CRED_SETUID:
 		case PRIV_CRED_SETEUID:
 		case PRIV_CRED_SETREUID:
-		case PRIV_CRED_SETRESUID: {
-			struct mac_do_setuid_data *data = fetch_data();
-			struct rules *rules;
-			struct rule *rule;
-			int error;
-
-			if (check_data_usable(data, sizeof(*data), priv) != 0)
-				return (EPERM);
-
-			rules = &data->hdr.conf->rules;
-
-			error = EPERM;
-			STAILQ_FOREACH(rule, &rules->head, r_entries)
-				if (rule_applies(rule, cred)) {
-					error = rule_grant_user(rule, cred, data->target_uid);
-					if (error != EPERM)
-						break;
-				}
-
-			return (error);
-		}
+		case PRIV_CRED_SETRESUID:
+			return (priv_grant_user(cred, priv));
 
 		case PRIV_CRED_SETGID:
 		case PRIV_CRED_SETEGID:
 		case PRIV_CRED_SETREGID:
-		case PRIV_CRED_SETRESGID: {
-			struct mac_do_setgid_data *data = fetch_data();
-			struct rules *rules;
-			struct rule *rule;
-			int error;
+		case PRIV_CRED_SETRESGID:
+			return (priv_grant_group(cred, priv));
 
-			if (check_data_usable(data, sizeof(*data), priv) != 0)
-				return (EPERM);
-
-			rules = &data->hdr.conf->rules;
-
-			error = EPERM;
-			STAILQ_FOREACH(rule, &rules->head, r_entries)
-				if (rule_applies(rule, cred)) {
-					error = rule_grant_primary_group(rule, cred, data->target_gid);
-					if (error != EPERM)
-						break;
-				}
-
-			return (error);
-		}
-
-		case PRIV_CRED_SETGROUPS: {
-			struct mac_do_setgroups_data *data = fetch_data();
-			struct rules *rules;
-			struct rule *rule;
-			int error;
-
-			if (check_data_usable(data, sizeof(*data), priv) != 0)
-				return (EPERM);
-
-			rules = &data->hdr.conf->rules;
-
-			if (data->ngroups < 0 || data->groups == NULL)
-				return (EPERM);
-
-			error = EPERM;
-			STAILQ_FOREACH(rule, &rules->head, r_entries)
-				if (rule_applies(rule, cred)) {
-					error = rule_grant_setgroups(rule, cred,
-							data->ngroups, data->groups);
-					if (error != EPERM)
-						break;
-				}
-
-			return (error);
-		}
+		case PRIV_CRED_SETGROUPS:
+			return (priv_grant_groups(cred, priv));
 
 		default:
 			return (EPERM);
