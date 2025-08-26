@@ -258,6 +258,12 @@ mac_cred_setcred_exit(void)
 
 MAC_CHECK_PROBE_DEFINE2(cred_check_setuid, "struct ucred *", "uid_t");
 
+void
+mac_cred_setuid_enter(void)
+{
+	MAC_POLICY_PERFORM_NOSLEEP(cred_setuid_enter);
+}
+
 int
 mac_cred_check_setuid(struct ucred *cred, uid_t uid)
 {
@@ -269,7 +275,19 @@ mac_cred_check_setuid(struct ucred *cred, uid_t uid)
 	return (error);
 }
 
+void
+mac_cred_setuid_exit(void)
+{
+	MAC_POLICY_PERFORM_NOSLEEP(cred_setuid_exit);
+}
+
 MAC_CHECK_PROBE_DEFINE2(cred_check_seteuid, "struct ucred *", "uid_t");
+
+void
+mac_cred_seteuid_enter(void)
+{
+	MAC_POLICY_PERFORM_NOSLEEP(cred_seteuid_enter);
+}
 
 int
 mac_cred_check_seteuid(struct ucred *cred, uid_t euid)
@@ -282,7 +300,19 @@ mac_cred_check_seteuid(struct ucred *cred, uid_t euid)
 	return (error);
 }
 
+void
+mac_cred_seteuid_exit(void)
+{
+	MAC_POLICY_PERFORM_NOSLEEP(cred_seteuid_exit);
+}
+
 MAC_CHECK_PROBE_DEFINE2(cred_check_setgid, "struct ucred *", "gid_t");
+
+void
+mac_cred_setgid_enter(void)
+{
+	MAC_POLICY_PERFORM_NOSLEEP(cred_setgid_enter);
+}
 
 int
 mac_cred_check_setgid(struct ucred *cred, gid_t gid)
@@ -295,7 +325,19 @@ mac_cred_check_setgid(struct ucred *cred, gid_t gid)
 	return (error);
 }
 
+void
+mac_cred_setgid_exit(void)
+{
+	MAC_POLICY_PERFORM_NOSLEEP(cred_setgid_exit);
+}
+
 MAC_CHECK_PROBE_DEFINE2(cred_check_setegid, "struct ucred *", "gid_t");
+
+void
+mac_cred_setegid_enter(void)
+{
+	MAC_POLICY_PERFORM_NOSLEEP(cred_setegid_enter);
+}
 
 int
 mac_cred_check_setegid(struct ucred *cred, gid_t egid)
@@ -308,8 +350,20 @@ mac_cred_check_setegid(struct ucred *cred, gid_t egid)
 	return (error);
 }
 
+void
+mac_cred_setegid_exit(void)
+{
+	MAC_POLICY_PERFORM_NOSLEEP(cred_setegid_exit);
+}
+
 MAC_CHECK_PROBE_DEFINE3(cred_check_setgroups, "struct ucred *", "int",
     "gid_t *");
+
+void
+mac_cred_setgroups_enter(void)
+{
+	MAC_POLICY_PERFORM_NOSLEEP(cred_setgroups_enter);
+}
 
 int
 mac_cred_check_setgroups(struct ucred *cred, int ngroups, gid_t *gidset)
@@ -322,8 +376,20 @@ mac_cred_check_setgroups(struct ucred *cred, int ngroups, gid_t *gidset)
 	return (error);
 }
 
+void
+mac_cred_setgroups_exit(void)
+{
+	MAC_POLICY_PERFORM_NOSLEEP(cred_setgroups_exit);
+}
+
 MAC_CHECK_PROBE_DEFINE3(cred_check_setreuid, "struct ucred *", "uid_t",
     "uid_t");
+
+void
+mac_cred_setreuid_enter(void)
+{
+	MAC_POLICY_PERFORM_NOSLEEP(cred_setreuid_enter);
+}
 
 int
 mac_cred_check_setreuid(struct ucred *cred, uid_t ruid, uid_t euid)
@@ -336,8 +402,20 @@ mac_cred_check_setreuid(struct ucred *cred, uid_t ruid, uid_t euid)
 	return (error);
 }
 
+void
+mac_cred_setreuid_exit(void)
+{
+	MAC_POLICY_PERFORM_NOSLEEP(cred_setreuid_exit);
+}
+
 MAC_CHECK_PROBE_DEFINE3(cred_check_setregid, "struct ucred *", "gid_t",
     "gid_t");
+
+void
+mac_cred_setregid_enter(void)
+{
+	MAC_POLICY_PERFORM_NOSLEEP(cred_setregid_enter);
+}
 
 int
 mac_cred_check_setregid(struct ucred *cred, gid_t rgid, gid_t egid)
@@ -350,8 +428,20 @@ mac_cred_check_setregid(struct ucred *cred, gid_t rgid, gid_t egid)
 	return (error);
 }
 
+void
+mac_cred_setregid_exit(void)
+{
+	MAC_POLICY_PERFORM_NOSLEEP(cred_setregid_exit);
+}
+
 MAC_CHECK_PROBE_DEFINE4(cred_check_setresuid, "struct ucred *", "uid_t",
     "uid_t", "uid_t");
+
+void
+mac_cred_setresuid_enter(void)
+{
+	MAC_POLICY_PERFORM_NOSLEEP(cred_setresuid_enter);
+}
 
 int
 mac_cred_check_setresuid(struct ucred *cred, uid_t ruid, uid_t euid,
@@ -366,8 +456,20 @@ mac_cred_check_setresuid(struct ucred *cred, uid_t ruid, uid_t euid,
 	return (error);
 }
 
+void
+mac_cred_setresuid_exit(void)
+{
+	MAC_POLICY_PERFORM_NOSLEEP(cred_setresuid_exit);
+}
+
 MAC_CHECK_PROBE_DEFINE4(cred_check_setresgid, "struct ucred *", "gid_t",
     "gid_t", "gid_t");
+
+void
+mac_cred_setresgid_enter(void)
+{
+	MAC_POLICY_PERFORM_NOSLEEP(cred_setresgid_enter);
+}
 
 int
 mac_cred_check_setresgid(struct ucred *cred, gid_t rgid, gid_t egid,
@@ -380,6 +482,12 @@ mac_cred_check_setresgid(struct ucred *cred, gid_t rgid, gid_t egid,
 	    sgid);
 
 	return (error);
+}
+
+void
+mac_cred_setresgid_exit(void)
+{
+	MAC_POLICY_PERFORM_NOSLEEP(cred_setresgid_exit);
 }
 
 MAC_CHECK_PROBE_DEFINE2(cred_check_visible, "struct ucred *",

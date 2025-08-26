@@ -119,18 +119,36 @@ void	mac_cred_setcred_enter(void);
 int	mac_cred_check_setcred(u_int flags, const struct ucred *old_cred,
 	    struct ucred *new_cred);
 void	mac_cred_setcred_exit(void);
+void 	mac_cred_setegid_enter(void);
 int	mac_cred_check_setegid(struct ucred *cred, gid_t egid);
+void 	mac_cred_setegid_exit(void);
+void 	mac_cred_seteuid_enter(void);
 int	mac_cred_check_seteuid(struct ucred *cred, uid_t euid);
+void 	mac_cred_seteuid_exit(void);
+void 	mac_cred_setgid_enter(void);
 int	mac_cred_check_setgid(struct ucred *cred, gid_t gid);
+void 	mac_cred_setgid_exit(void);
+void 	mac_cred_setgroups_enter(void);
 int	mac_cred_check_setgroups(struct ucred *cred, int ngroups,
 	    gid_t *gidset);
+void 	mac_cred_setgroups_exit(void);
+void 	mac_cred_setregid_enter(void);
 int	mac_cred_check_setregid(struct ucred *cred, gid_t rgid, gid_t egid);
+void 	mac_cred_setregid_exit(void);
+void 	mac_cred_setresgid_enter(void);
 int	mac_cred_check_setresgid(struct ucred *cred, gid_t rgid, gid_t egid,
 	    gid_t sgid);
+void 	mac_cred_setresgid_exit(void);
+void 	mac_cred_setresuid_enter(void);
 int	mac_cred_check_setresuid(struct ucred *cred, uid_t ruid, uid_t euid,
 	    uid_t suid);
+void 	mac_cred_setresuid_exit(void);
+void 	mac_cred_setreuid_enter(void);
 int	mac_cred_check_setreuid(struct ucred *cred, uid_t ruid, uid_t euid);
+void 	mac_cred_setreuid_exit(void);
+void 	mac_cred_setuid_enter(void);
 int	mac_cred_check_setuid(struct ucred *cred, uid_t uid);
+void 	mac_cred_setuid_exit(void);
 int	mac_cred_check_visible(struct ucred *cr1, struct ucred *cr2);
 void	mac_cred_copy(struct ucred *cr1, struct ucred *cr2);
 void	mac_cred_create_init(struct ucred *cred);
