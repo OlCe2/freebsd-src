@@ -253,7 +253,8 @@ main(int argc, char **argv)
 		errx(EXIT_FAILURE, "-k and -u/--ruid/--svuid/--euid cannot be used together");
 
 	if (!keep_user) {
-		if (username_provided) {
+		if (username_provided ||
+			(euid_str == NULL && ruid_str == NULL && svuid_str == NULL)) {
 			uid_t uid = parse_user_pwd(username, &pw);
 
 			if (pw == NULL && primary_group == NULL)
