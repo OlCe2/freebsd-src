@@ -257,7 +257,7 @@ main(int argc, char **argv)
 			(euid_str == NULL && ruid_str == NULL && svuid_str == NULL)) {
 			uid_t uid = parse_user_pwd(username, &pw);
 
-			if (pw == NULL && primary_group == NULL)
+			if (pw == NULL && primary_group == NULL && !uid_only)
 				errx(EXIT_FAILURE, "must specify -g when using a numeric UID");
 
 			wcred.sc_uid = wcred.sc_ruid = wcred.sc_svuid = uid;
@@ -282,162 +282,164 @@ main(int argc, char **argv)
 			err(EXIT_FAILURE, "cannot determine current user");
 	}
 
-	if (primary_group != NULL) {
-		gid = parse_group(primary_group);
-		set_all_gids = true;
-	} else if (pw != NULL && !uid_only) {
-		gid = pw->pw_gid;
-		set_all_gids = true;
-	} else if (ruid_str != NULL || svuid_str != NULL || euid_str != NULL) {
-		gid = getegid();
-		set_all_gids = true;
-	} else {
-		errx(EXIT_FAILURE, 
-			"must specify '-g' or some user that has an entry in the password database");
-	}
-
-	if (set_all_gids) {
-		wcred.sc_gid = wcred.sc_rgid = wcred.sc_svgid = gid;
-		setcred_flags |= SETCREDF_GID | SETCREDF_RGID | SETCREDF_SVGID;
-	}
-
-	if (rgid_str != NULL) {
-		wcred.sc_rgid = parse_group(rgid_str);
-		setcred_flags |= SETCREDF_RGID;
-	}
-	if (svgid_str != NULL) {
-		wcred.sc_svgid = parse_group(svgid_str);
-		setcred_flags |= SETCREDF_SVGID;
-	}
-	if (egid_str != NULL) {
-		wcred.sc_gid = parse_group(egid_str);
-		setcred_flags |= SETCREDF_GID;
-	}
-	
-	if (supp_groups_str != NULL) {
-		char *s = strdup(supp_groups_str);
-		char *p = s;
-		char *tok;
-
-		if (s == NULL)
-			err(EXIT_FAILURE, "strdup failed for supplementary groups string");
-
-		while ((tok = strsep(&p, ",")) != NULL) {
-			gid_t g;
-			if (*tok == '\0')
-				continue;
-
-			g = parse_group(tok);
-			supp_groups_add = realloc_groups(supp_groups_add, add_count + 1);
-			supp_groups_add[add_count++] = g;
-		}
-		free(s);
-		supp_groups_reset = true;
-	}
-
-	if (group_mod_str != NULL) {
-		int i = 0;
-		char *s = strdup(group_mod_str);
-		char *p = s;
-		char *tok;
-
-		if (s == NULL)
-			err(EXIT_FAILURE, "strdup failed for group modification string");
-
-		while ((tok = strsep(&p, ",")) != NULL) {
-			if (*tok == '\0')
-				continue;
-
-			if (tok[0] == '@')  {
-				if (i > 0)
-					errx(EXIT_FAILURE, "'@' must be the first token in -s option");
-				supp_groups_reset = true;
-			} else if (tok[0] == '+' || tok[0] == '-') {
-				bool is_add = tok[0] == '+';
-				const char *gstr = tok + 1;
-				gid = parse_group(gstr);
-				if (is_add) {
-					supp_groups_add = realloc_groups(supp_groups_add, add_count + 1);
-					supp_groups_add[add_count++] = gid;
-				} else {
-					groups_supp_del = realloc_groups(groups_supp_del, rem_count + 1);
-					groups_supp_del[rem_count++] = gid;
-				}
-			} else {
-				errx(EXIT_FAILURE, "invalid -s entry '%s'", tok);
-			}
-			i++;
-		}
-		free(s);
-	}
-
-	if (supp_groups_reset) {
-		wcred.sc_supp_groups = NULL;
-		wcred.sc_supp_groups_nb = 0;
-		setcred_flags |= SETCREDF_SUPP_GROUPS;
-	} else {
-		if (pw != NULL && !uid_only) {
-			gid_t *groups = NULL;
-			int base_count = 0;
-			const long ngroups_alloc = sysconf(_SC_NGROUPS_MAX) + 2;
-
-			/*
-			 * If there are too many groups specified for some UID, setting
-			 * the groups will fail.  We preserve this condition by
-			 * allocating one more group slot than allowed, as
-			 * getgrouplist() itself is just some getter function and thus
-			 * doesn't (and shouldn't) check the limit, and to allow
-			 * setcred() to actually check for overflow.
-			 */
-			groups = malloc(sizeof(*groups) * ngroups_alloc);
-			if (groups == NULL)
-				err(EXIT_FAILURE, "cannot allocate memory for user groups from database");
-			base_count = ngroups_alloc;
-			getgrouplist(pw->pw_name, pw->pw_gid, groups, &base_count);
-
-			for (int i = 0; i < base_count; ++i) {
-				supp_groups_add = realloc_groups(supp_groups_add, add_count + 1);
-				supp_groups_add[add_count++] = groups[i];
-			}
-			free(groups);
+	if (!uid_only) {
+		if (primary_group != NULL) {
+			gid = parse_group(primary_group);
+			set_all_gids = true;
+		} else if (pw != NULL && !uid_only) {
+			gid = pw->pw_gid;
+			set_all_gids = true;
+		} else if (ruid_str != NULL || svuid_str != NULL || euid_str != NULL) {
+			gid = getegid();
+			set_all_gids = true;
 		} else {
-			int ngroups = getgroups(0, NULL);
-			if (ngroups > 0) {
-				gid_t *groups = malloc(sizeof(gid_t) * ngroups);
-				if (groups == NULL)
-					err(EXIT_FAILURE, "cannot allocate memory for current user groups");
-				if (getgroups(ngroups, groups) < 0)
-					err(EXIT_FAILURE, "getgroups() failed");
+			errx(EXIT_FAILURE, 
+				"must specify '-g' or some user that has an entry in the password database");
+		}
 
-				for (int i = 0; i < ngroups; ++i) {
+		if (set_all_gids) {
+			wcred.sc_gid = wcred.sc_rgid = wcred.sc_svgid = gid;
+			setcred_flags |= SETCREDF_GID | SETCREDF_RGID | SETCREDF_SVGID;
+		}
+
+		if (rgid_str != NULL) {
+			wcred.sc_rgid = parse_group(rgid_str);
+			setcred_flags |= SETCREDF_RGID;
+		}
+		if (svgid_str != NULL) {
+			wcred.sc_svgid = parse_group(svgid_str);
+			setcred_flags |= SETCREDF_SVGID;
+		}
+		if (egid_str != NULL) {
+			wcred.sc_gid = parse_group(egid_str);
+			setcred_flags |= SETCREDF_GID;
+		}
+		
+		if (supp_groups_str != NULL) {
+			char *s = strdup(supp_groups_str);
+			char *p = s;
+			char *tok;
+
+			if (s == NULL)
+				err(EXIT_FAILURE, "strdup failed for supplementary groups string");
+
+			while ((tok = strsep(&p, ",")) != NULL) {
+				gid_t g;
+				if (*tok == '\0')
+					continue;
+
+				g = parse_group(tok);
+				supp_groups_add = realloc_groups(supp_groups_add, add_count + 1);
+				supp_groups_add[add_count++] = g;
+			}
+			free(s);
+			supp_groups_reset = true;
+		}
+
+		if (group_mod_str != NULL) {
+			int i = 0;
+			char *s = strdup(group_mod_str);
+			char *p = s;
+			char *tok;
+
+			if (s == NULL)
+				err(EXIT_FAILURE, "strdup failed for group modification string");
+
+			while ((tok = strsep(&p, ",")) != NULL) {
+				if (*tok == '\0')
+					continue;
+
+				if (tok[0] == '@')  {
+					if (i > 0)
+						errx(EXIT_FAILURE, "'@' must be the first token in -s option");
+					supp_groups_reset = true;
+				} else if (tok[0] == '+' || tok[0] == '-') {
+					bool is_add = tok[0] == '+';
+					const char *gstr = tok + 1;
+					gid = parse_group(gstr);
+					if (is_add) {
+						supp_groups_add = realloc_groups(supp_groups_add, add_count + 1);
+						supp_groups_add[add_count++] = gid;
+					} else {
+						groups_supp_del = realloc_groups(groups_supp_del, rem_count + 1);
+						groups_supp_del[rem_count++] = gid;
+					}
+				} else {
+					errx(EXIT_FAILURE, "invalid -s entry '%s'", tok);
+				}
+				i++;
+			}
+			free(s);
+		}
+
+		if (supp_groups_reset) {
+			wcred.sc_supp_groups = NULL;
+			wcred.sc_supp_groups_nb = 0;
+			setcred_flags |= SETCREDF_SUPP_GROUPS;
+		} else {
+			if (pw != NULL && !uid_only) {
+				gid_t *groups = NULL;
+				int base_count = 0;
+				const long ngroups_alloc = sysconf(_SC_NGROUPS_MAX) + 2;
+
+				/*
+				 * If there are too many groups specified for some UID, setting
+				 * the groups will fail.  We preserve this condition by
+				 * allocating one more group slot than allowed, as
+				 * getgrouplist() itself is just some getter function and thus
+				 * doesn't (and shouldn't) check the limit, and to allow
+				 * setcred() to actually check for overflow.
+				 */
+				groups = malloc(sizeof(*groups) * ngroups_alloc);
+				if (groups == NULL)
+					err(EXIT_FAILURE, "cannot allocate memory for user groups from database");
+				base_count = ngroups_alloc;
+				getgrouplist(pw->pw_name, pw->pw_gid, groups, &base_count);
+
+				for (int i = 0; i < base_count; ++i) {
 					supp_groups_add = realloc_groups(supp_groups_add, add_count + 1);
 					supp_groups_add[add_count++] = groups[i];
 				}
 				free(groups);
+			} else {
+				int ngroups = getgroups(0, NULL);
+				if (ngroups > 0) {
+					gid_t *groups = malloc(sizeof(gid_t) * ngroups);
+					if (groups == NULL)
+						err(EXIT_FAILURE, "cannot allocate memory for current user groups");
+					if (getgroups(ngroups, groups) < 0)
+						err(EXIT_FAILURE, "getgroups() failed");
+
+					for (int i = 0; i < ngroups; ++i) {
+						supp_groups_add = realloc_groups(supp_groups_add, add_count + 1);
+						supp_groups_add[add_count++] = groups[i];
+					}
+					free(groups);
+				}
 			}
 		}
-	}
 
-	if (supp_groups_add != NULL || groups_supp_del != NULL) {
-		gid_t *final;
-		size_t final_count = 0;
+		if (supp_groups_add != NULL || groups_supp_del != NULL) {
+			gid_t *final;
+			size_t final_count = 0;
 
-		final = malloc(sizeof(gid_t) * (add_count + rem_count + 4));
+			final = malloc(sizeof(gid_t) * (add_count + rem_count + 4));
 
-		if (final == NULL)
-			err(EXIT_FAILURE, "cannot allocate memory for final supplementary groups");
+			if (final == NULL)
+				err(EXIT_FAILURE, "cannot allocate memory for final supplementary groups");
 
-		for (size_t i = 0; i < add_count; ++i) {
-			final[final_count++] = supp_groups_add[i];
+			for (size_t i = 0; i < add_count; ++i) {
+				final[final_count++] = supp_groups_add[i];
+			}
+
+			final_count = remove_duplicates(final, final_count);
+
+			final_count = remove_groups_from_array(final, final_count, groups_supp_del, rem_count);
+
+			wcred.sc_supp_groups = final;
+			wcred.sc_supp_groups_nb = final_count;
+			setcred_flags |= SETCREDF_SUPP_GROUPS;
 		}
-
-		final_count = remove_duplicates(final, final_count);
-
-		final_count = remove_groups_from_array(final, final_count, groups_supp_del, rem_count);
-
-		wcred.sc_supp_groups = final;
-		wcred.sc_supp_groups_nb = final_count;
-		setcred_flags |= SETCREDF_SUPP_GROUPS;
 	}
 
 	if (print_rule) {
