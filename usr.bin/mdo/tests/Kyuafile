@@ -1,0 +1,21 @@
+syntax(2)
+
+-- Kyuafile for mdo(1) tests
+-- This file defines the test suite for the enhanced mdo tool
+-- Tests run in jails for isolation as recommended by mentor
+
+test_suite("mdo")
+
+-- Main test program - runs in jails for isolation
+atf_test_program{
+    name="mdo_test",
+    test_suite="mdo",
+    execenv="jail"
+}
+
+-- Basic test program - also runs in jails 
+atf_test_program{
+    name="mdo_basic_test",
+    test_suite="mdo", 
+    execenv="jail"
+}
