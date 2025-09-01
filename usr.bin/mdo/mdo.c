@@ -328,6 +328,7 @@ main(int argc, char **argv)
 
 			while ((tok = strsep(&p, ",")) != NULL) {
 				gid_t g;
+				
 				if (*tok == '\0')
 					continue;
 
@@ -359,6 +360,7 @@ main(int argc, char **argv)
 				} else if (tok[0] == '+' || tok[0] == '-') {
 					bool is_add = tok[0] == '+';
 					const char *gstr = tok + 1;
+					
 					gid = parse_group(gstr);
 					if (is_add) {
 						supp_groups_add = realloc_groups(supp_groups_add, add_count + 1);
@@ -406,6 +408,7 @@ main(int argc, char **argv)
 				free(groups);
 			} else {
 				int ngroups = getgroups(0, NULL);
+				
 				if (ngroups > 0) {
 					gid_t *groups = malloc(sizeof(gid_t) * ngroups);
 					if (groups == NULL)
