@@ -1,49 +1,154 @@
 .\"-
-.\" Copyright(c) 2024 Baptiste Daroussin <bapt@FreeBSD.org>
-.\"
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd May 26, 2025
+.\" Copyright (c) 2024 Baptiste Daroussin <bapt@FreeBSD.org>
+.\"
+.\" Portions of this documentation were written by Kushagra Srivastava
+.\" <kushagra1403@gmail.com> as part of Google Summer of Code 2025.
+.\"
+.Dd September 1, 2025
 .Dt MDO 1
 .Os
 .Sh NAME
 .Nm mdo
-.Nd execute commands as another user
+.Nd execute commands under different credentials via mac_do(4)
 .Sh SYNOPSIS
 .Nm
-.Op Fl u Ar username
+.Op Fl u Ar user
 .Op Fl i
-.Op command Op args
+.Op Fl k
+.Op Fl g Ar group
+.Op Fl G Ar g1,g2,...
+.Op Fl s Ar mods
+.Op Fl r | Fl -print-rule
+.Op Fl h
+.Op Fl -ruid Ar uid
+.Op Fl -svuid Ar uid
+.Op Fl -euid Ar uid
+.Op Fl -rgid Ar gid
+.Op Fl -svgid Ar gid
+.Op Fl -egid Ar gid
+.Op --
+.Op Ar command Op args...
 .Sh DESCRIPTION
 The
 .Nm
 utility executes the specified
 .Ar command
-as user
-.Ar username .
+under credentials changed according to rules enforced by
+.Xr mac_do 4 .
+It provides a userland interface to request credential transitions
+without requiring setuid-root binaries.
 .Pp
-If no
-.Ar username
-is provided it defaults to the
-.Va root
-user.
 If no
 .Ar command
-is specified, it will execute the shell specified as
-.Va SHELL
-environnement variable, falling back on
+is specified,
+.Nm
+executes an interactive shell determined by the
+.Ev SHELL
+environment variable, defaulting to
 .Pa /bin/sh .
 .Pp
-The
-.Fl i
-option can be used to only call
-.Fn setuid
-and keep the group from the calling user.
+The options are:
+.Bl -tag -width indent
+.It Fl u Ar user
+Target user (name or numeric UID).  
+If unspecified, defaults to
+.Dq root .
+.It Fl i
+Only change the UID; skip all group changes.  
+Equivalent to keeping the caller’s groups while switching user IDs.
+.It Fl k
+Keep the current user, only change groups.  
+This option cannot be combined with
+.Fl u
+or explicit UID overrides.
+.It Fl g Ar group
+Override the primary group (name or numeric GID).  
+If not provided, the default primary group is taken from the password database
+entry of the target user.
+.It Fl G Ar g1,g2,...
+Set the full list of supplementary groups, replacing defaults.  
+Groups can be specified by name or GID, separated by commas.
+.It Fl s Ar mods
+Modify supplementary groups incrementally.  
+The argument is a comma-separated list of tokens:
+.Bl -tag -width indent -compact
+.It Li @
+Reset supplementary groups to empty before applying other modifications.
+.It Li + Ns Ar group
+Add a group.
+.It Li - Ns Ar group
+Remove a group.
+.El
+.It Fl r , Fl -print-rule
+Print the equivalent
+.Va mac.do.rules
+transition clause corresponding to the requested credentials,
+instead of executing a command.  
+Useful for administrators to generate policy rules.
+.It Fl h
+Display usage information.
+.El
+.Ss Advanced UID/GID Overrides
+The following long options allow setting individual credential components
+explicitly:
+.Bl -tag -width indent
+.It Fl -ruid Ar uid
+Set real UID.
+.It Fl -svuid Ar uid
+Set saved UID.
+.It Fl -euid Ar uid
+Set effective UID.
+.It Fl -rgid Ar gid
+Set real GID.
+.It Fl -svgid Ar gid
+Set saved GID.
+.It Fl -egid Ar gid
+Set effective GID.
+.El
+These may be combined with group modifications for fine-grained transitions.
+.Pp
+Credentials are applied atomically using
+.Xr setcred 2 .
+All requests are subject to authorization by
+.Xr mac_do 4 .
+.Sh EXAMPLES
+Run a command as another user:
+.Bd -literal -offset indent
+mdo -u alice id
+.Ed
+.Pp
+Run with explicit primary and supplementary groups:
+.Bd -literal -offset indent
+mdo -u 1001 -g wheel -G staff,operator /bin/sh
+.Ed
+.Pp
+Modify only supplementary groups for the current user:
+.Bd -literal -offset indent
+mdo -k -s @,+wheel,+operator /usr/bin/id
+.Ed
+.Pp
+Request an advanced transition with explicit IDs:
+.Bd -literal -offset indent
+mdo --ruid 1002 --svgid 1003 --egid 1004 /bin/id
+.Ed
+.Pp
+Print the rule string corresponding to a requested transition:
+.Bd -literal -offset indent
+mdo -u bob -g wheel -G staff -r
+.Ed
 .Sh SEE ALSO
+.Xr mac_do 4 ,
+.Xr setcred 2 ,
 .Xr su 1 ,
-.Xr mac_do 4
+.Xr doas 1
 .Sh HISTORY
 The
 .Nm
-command appeared in
+command first appeared in
 .Fx 14.2 .
+Support for explicit UID/GID overrides, supplementary group control,
+group-only transitions, and rule printing was added in
+.Fx 15.0
+as part of Google Summer of Code 2025.
