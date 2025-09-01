@@ -65,19 +65,19 @@ parse_user_pwd(const char *s, struct passwd **pwd)
 		*pwd = pw;
 
 	if (pw != NULL)
-		return pw->pw_uid;
+		return (pw->pw_uid);
 
 	uid = strtonum(s, 0, UID_MAX, &errp);
 	if (errp != NULL)
 		errx(EXIT_FAILURE, "invalid UID '%s': %s", s, errp);
 
-	return uid;
+	return (uid);
 }
 
 static uid_t
 parse_user(const char *s)
 {
-	return parse_user_pwd(s, NULL);
+	return (parse_user_pwd(s, NULL));
 }
 
 static gid_t
@@ -88,22 +88,23 @@ parse_group(const char *s)
 	const char *errp;
 
 	if (gr != NULL)
-		return gr->gr_gid;
+		return (gr->gr_gid);
 
 	gid = strtonum(s, 0, GID_MAX, &errp);
 	if (errp != NULL)
 		errx(EXIT_FAILURE, "invalid GID '%s': %s", s, errp);
 
-	return gid;
+	return (gid);
 }
 
 static gid_t *
 realloc_groups(gid_t *array, size_t new_count)
 {
 	gid_t *new_array = realloc(array, sizeof(gid_t) * new_count);
+
 	if (new_array == NULL)
 		err(EXIT_FAILURE, "realloc of groups failed");
-	return new_array;
+	return (new_array);
 }
 
 static int
@@ -113,37 +114,39 @@ gid_cmp(const void *a, const void *b)
 	gid_t gb = *(const gid_t *)b;
 	
 	if (ga < gb)
-		return -1;
+		return (-1);
 	else if (ga > gb)
-		return 1;
+		return (1);
 	else
-		return 0;
+		return (0);
 }
 
 static size_t
 remove_duplicates(gid_t *array, size_t count)
 {
+	size_t j = 0;
+
 	if (count <= 1)
-		return count;
+		return (count);
 	
 	qsort(array, count, sizeof(gid_t), gid_cmp);
 	
-	size_t j = 0;
 	for (size_t i = 1; i < count; i++) {
 		if (array[i] != array[j]) {
 			array[++j] = array[i];
 		}
 	}
-	return j + 1;
+	return (j + 1);
 }
 
 static size_t
 remove_groups_from_array(gid_t *array, size_t count, const gid_t *remove_list, size_t remove_count)
 {
-	if (remove_count == 0)
-		return count;
-	
 	size_t final_count = 0;
+
+	if (remove_count == 0)
+		return (count);
+	
 	for (size_t i = 0; i < count; i++) {
 		bool should_remove = false;
 		for (size_t j = 0; j < remove_count; j++) {
@@ -155,7 +158,7 @@ remove_groups_from_array(gid_t *array, size_t count, const gid_t *remove_list, s
 		if (!should_remove)
 			array[final_count++] = array[i];
 	}
-	return final_count;
+	return (final_count);
 }
 
 int
