@@ -6,9 +6,10 @@
 .\"
 .\" Portions of this documentation were written by Olivier Certner
 .\" <olce@FreeBSD.org> at Kumacom SARL under sponsorship from the FreeBSD
-.\" Foundation.
+.\" Foundation, and later enhanced by Kushagra Srivastava as part of
+.\" Google Summer of Code 2025.
 .\"
-.Dd June 11, 2025
+.Dd September 1, 2025
 .Dt MAC_DO 4
 .Os
 .Sh NAME
@@ -39,17 +40,33 @@ mac_do_load="YES"
 The
 .Nm
 policy module allows unprivileged users to change process credentials according
-to rules configured by the administrator.
-It supports per-jail configuration.
+to administrator-defined rules.
+It supports per-jail configuration of both rules and authorized executables.
 .Pp
-Currently, the
-.Nm
-policy module only produces effects to processes spawned from the
+By default, processes may only request credential transitions when they are
+executing from an authorized path.
+Originally, only
 .Pa /usr/bin/mdo
-executable, please see
+was supported.
+.Nm
+now allows a configurable per-jail list of authorized executables.
+.Pp
+Credential transitions may be requested either through the dedicated
+.Xr setcred 2
+system call, or through traditional credential-changing system calls such as
+.Xr setuid 2 ,
+.Xr seteuid 2 ,
+.Xr setgid 2 ,
+.Xr setegid 2 ,
+and
+.Xr setgroups 2 .
+.Nm
+mediates all of these calls uniformly, applying the configured rules.
+.Pp
+See
 .Xr mdo 1
-for more details on this program.
-.Sh CREDENTIALS RULES
+for the companion userland tool.
+.Sh CREDENTIAL RULES
 Rules specify which transitions of process credentials
 .Nm
 will allow, based on current process credentials and the desired final ones.
@@ -277,14 +294,13 @@ policy.
 (Default: 1).
 .It Va security.mac.do.rules
 The list of credential rules, whose syntax is described in the
-.Sx CREDENTIALS RULES
+.Sx CREDENTIAL RULES
 section above.
 This list is specific to each jail.
-Please see the
-.Sx JAIL SUPPORT
-section below for more details on the interaction of
-.Nm
-with jails.
+.It Va security.mac.do.exec_paths
+The list of executables from which credential transitions may be requested.
+This is a colon-separated list of absolute paths.
+Up to 8 paths are supported per jail.
 .It Va security.mac.do.print_parse_error
 Logs a message on trying to set incorrect rules via the
 .Va security.mac.do.rules
@@ -293,10 +309,11 @@ knob.
 .El
 .Sh JAIL SUPPORT
 .Nm
-supports per-jail configuration of rules.
+supports per-jail configuration of both credential rules and authorized
+executables.
 .Pp
-By default, at creation, a new jail has no credentials rules, effectively
-disabling
+By default, at creation, a new jail has no credentials rules and no authorized
+executables, effectively disabling
 .Nm
 for its processes.
 .Pp
@@ -305,22 +322,21 @@ The following jail parameters are defined:
 .It Va mac.do
 Possible values are:
 .Bl -tag -width "'disable'" -compact
-.It Ql enable
+.It Ql new
 .Nm
 will enforce specific credential rules in the jail.
 The
 .Va mac.do.rules
-jail parameter must also be set in this case.
+parameter must also be set in this case.
 .It Ql disable
 Disables
 .Nm
 in the jail.
-Strictly equivalent to jail creation's default behavior and to setting the rules
-to an empty string.
+Equivalent to the default behavior and to setting the rules to an empty string.
 .It Ql inherit
-The jail's credentials rules are inherited from the jail's parent
-.Pq which may themselves have been inherited .
-Modified rules propagate to all children jails configured for inheritance.
+The jail's configuration (rules and exec paths) is inherited from the parent
+jail.
+Modified settings propagate to all children jails configured for inheritance.
 .El
 .It Va mac.do.rules
 The credentials rules for the jail.
@@ -335,14 +351,18 @@ If set, and the jail parameter
 is not so explicitly, the value of the latter will default to
 .Ql disable
 if empty, else to
-.Ql enable .
-.El
-.Pp
-Each jail must have
-.Xr mdo 1
-installed at path
-.Pa /usr/bin/mdo ,
-as this path is currently not configurable.
+.Ql new .
+.It Va mac.do.exec_paths
+Set the authorized executables for the jail.
+It is always equal to the value that can be retrieved by the
+.Xr sysctl 8
+knob
+.Va security.mac.do.exec_paths
+described in section
+.Sx RUNTIME CONFIGURATION .
+Values are a colon-separated list of absolute paths.
+Only processes originating from one of these executables may request credential
+transitions inside the jail.
 .Sh EXAMPLES
 Here are several examples of single rules matching processes having a real user
 ID of 10001:
@@ -397,29 +417,19 @@ current supplementary groups must be kept.
 .Sh SEE ALSO
 .Xr mdo 1 ,
 .Xr setcred 2 ,
-.Xr mac 4 ,
+.Xr setuid 2 ,
+.Xr seteuid 2 ,
+.Xr setgid 2 ,
+.Xr setegid 2 ,
+.Xr setgroups 2 ,
 .Xr jail 8 ,
-.Xr sysctl 8
+.Xr sysctl 8 ,
+.Xr mac 9
 .Sh AUTHORS
 .An Olivier Certner Aq Mt olce@FreeBSD.org
 .An Baptiste Daroussin Aq Mt bapt@FreeBSD.org
-.Sh BUGS
-Currently,
-.Nm
-considers only credentials transitions requested through the
-.Xr setcred 2
-system call.
-This system call was in large part created so that
-.Nm
-can see whole credentials transitions to decide whether to authorize them, which
-the traditional UNIX's piecewise approach of successively changing different
-parts of them cannot allow.
-.Pp
-However, calls to traditional or standard credentials-changing functions can be
-considered as full transitions on their own, however limited, and as such should
-be equally monitored by
-.Nm .
-Future work will lift this restriction.
+.Sh CONTRIBUTORS
+.An Kushagra Srivastava Aq Mt thesynthax@FreeBSD.org
 .Sh SECURITY CONSIDERATIONS
 The threat model for
 .Nm
@@ -450,3 +460,12 @@ subsequent restarts, such as re-establishing pristine state or ensuring that the
 boot procedure up to the configuration of
 .Nm
 can be trusted.
+.Sh HISTORY
+The
+.Nm
+policy module first appeared in
+.Fx 14.2 .
+Support for per-jail executable lists and traditional credential syscalls was
+added in
+.Fx 15.0
+as part of Google Summer of Code 2025.
