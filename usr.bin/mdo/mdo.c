@@ -141,7 +141,8 @@ remove_duplicates(gid_t *array, size_t count)
 }
 
 static size_t
-remove_groups_from_array(gid_t *array, size_t count, const gid_t *remove_list, size_t remove_count)
+remove_groups_from_array(gid_t *array, size_t count,
+	const gid_t *remove_list, size_t remove_count)
 {
 	size_t final_count = 0;
 
@@ -268,7 +269,8 @@ main(int argc, char **argv)
 			 */
 			if (!start_from_current_groups && pw == NULL && primary_group == NULL && 
 				(rgid_str == NULL || svgid_str == NULL || egid_str == NULL))
-				errx(EXIT_FAILURE, "must specify primary groups or a user with an entry in the password database");
+				errx(EXIT_FAILURE,
+					"must specify primary groups or a user with an entry in the password database");
 
 			wcred.sc_uid = wcred.sc_ruid = wcred.sc_svuid = uid;
 			setcred_flags |= SETCREDF_UID | SETCREDF_RUID | SETCREDF_SVUID;
@@ -327,7 +329,8 @@ main(int argc, char **argv)
 		}
 	}
 	
-	if (!start_from_current_groups && pw == NULL && supp_groups_str == NULL && group_mod_str == NULL)
+	if (!start_from_current_groups && pw == NULL
+		&& supp_groups_str == NULL && group_mod_str == NULL)
 		supp_groups_reset = true;
 
 	if (supp_groups_str != NULL) {
