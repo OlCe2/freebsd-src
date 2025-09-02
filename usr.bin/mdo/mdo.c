@@ -427,6 +427,7 @@ main(int argc, char **argv)
 
 		if (ngroups > 0) {
 			gid_t *groups = malloc(sizeof(gid_t) * ngroups);
+
 			if (groups == NULL)
 				err(EXIT_FAILURE, "cannot allocate memory for current user groups");
 			if (getgroups(ngroups, groups) < 0)
@@ -482,6 +483,7 @@ main(int argc, char **argv)
 
 	if (*argv == NULL) {
 		const char *sh = getenv("SHELL");
+
 		if (sh == NULL)
 			sh = _PATH_BSHELL;
 		execlp(sh, sh, "-i", NULL);
