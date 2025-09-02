@@ -82,7 +82,7 @@ numeric_uid_without_group_exit_code_head() {
 }
 numeric_uid_without_group_exit_code_body() {
     # Using numeric UID without -g should fail
-    atf_check -s exit:1 -e match:"must specify -g" mdo -u 1000 /bin/true
+    atf_check -s exit:1 -e match:"must specify primary groups" mdo -u 1000 /bin/true
 }
 
 #
@@ -404,7 +404,7 @@ conflicting_options_exit_code_head() {
 }
 conflicting_options_exit_code_body() {
     # -k with --ruid should conflict
-    atf_check -s exit:1 -e match:"cannot be used together" mdo -k --ruid 1000 /bin/true
+    atf_check -s exit:1 -e match:"incompatible" mdo -k --ruid 1000 /bin/true
 }
 
 atf_test_case invalid_group_modification_syntax

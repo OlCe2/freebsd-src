@@ -74,8 +74,8 @@ show-failures: .kyua-setup
 	${KYUA_ENV} kyua report --verbose --results-filter=broken,failed
 
 # Install tests to system test directory
-install-tests: all
-	mkdir -p $(DESTDIR)$(TESTSDIR)/usr.bin/mdo
-	cp mdo_test mdo_basic_test Kyuafile $(DESTDIR)$(TESTSDIR)/usr.bin/mdo/
+install: all
+	mkdir -p $(DESTDIR)$(TESTSDIR)
+	cp mdo_test mdo_basic_test Kyuafile $(DESTDIR)$(TESTSDIR)
 
 .PHONY: test-basic test-all test-case list-tests clean-tests show-results show-failures install-tests
