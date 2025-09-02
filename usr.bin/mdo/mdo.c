@@ -8,6 +8,7 @@
 #include <sys/types.h>
 #include <sys/ucred.h>
 
+#include <assert.h>
 #include <err.h>
 #include <getopt.h>
 #include <grp.h>
@@ -27,9 +28,9 @@ usage(void)
 		"\n"
 		"Options:\n"
 		"  -u <user>       Target user (name or UID)\n"
-		"  -i              Only change UID, skip groups\n"
+		"  -i              Keep current groups, unless explicitly overridden\n"
 		"  -g <group>      Override primary group (name or GID)\n"
-		"  -k              Keep current user, only change groups\n"
+		"  -k              Keep current user, allows selective overrides\n"
 		"  -G <g1,g2,...>  Set supplementary groups (name or GID list)\n"
 		"  -s <mods>       Modify supplementary groups using:\n"
 		"                   +group to add, -group to remove, @ to reset\n"
@@ -172,8 +173,8 @@ main(int argc, char **argv)
 	const char *group_mod_str = NULL;
 	struct setcred wcred = SETCRED_INITIALIZER;
 	u_int setcred_flags = 0;
-	bool uid_only = false;
-	bool keep_user = false;
+	bool start_from_current_groups = false;
+	bool start_from_current_user = false;
 	int ch;
 
 	gid_t gid = -1;
@@ -206,10 +207,10 @@ main(int argc, char **argv)
 			username_provided = true;
 			break;
 		case 'i':
-			uid_only = true;
+			start_from_current_groups = true;
 			break;
 		case 'k':
-			keep_user = true;
+			start_from_current_user = true;
 			break;
 		case 'g':
 			primary_group = optarg;
@@ -251,17 +252,19 @@ main(int argc, char **argv)
 	argc -= optind;
 	argv += optind;
 
-	if (keep_user && (username_provided || ruid_str != NULL ||
+	if (start_from_current_user && (username_provided || ruid_str != NULL ||
 		svuid_str != NULL || euid_str != NULL))
-		errx(EXIT_FAILURE, "-k and -u/--ruid/--svuid/--euid cannot be used together");
+		errx(EXIT_FAILURE, "-k incompatible with -u or specifying all users");
 
-	if (!keep_user) {
+	if (!start_from_current_user) {
 		if (username_provided ||
 			(euid_str == NULL && ruid_str == NULL && svuid_str == NULL)) {
 			uid_t uid = parse_user_pwd(username, &pw);
 
-			if (pw == NULL && primary_group == NULL && !uid_only)
-				errx(EXIT_FAILURE, "must specify -g when using a numeric UID");
+			if (!start_from_current_groups && pw == NULL && primary_group == NULL &&
+				(rgid_str == NULL || svgid_str == NULL || egid_str == NULL))
+				errx(EXIT_FAILURE,
+					"must specify primary groups or a user with an entry in the password database");
 
 			wcred.sc_uid = wcred.sc_ruid = wcred.sc_svuid = uid;
 			setcred_flags |= SETCREDF_UID | SETCREDF_RUID | SETCREDF_SVUID;
@@ -270,14 +273,20 @@ main(int argc, char **argv)
 		if (ruid_str != NULL) {
 			wcred.sc_ruid = parse_user(ruid_str);
 			setcred_flags |= SETCREDF_RUID;
+			gid = getegid();
+			set_all_gids = true;
 		}
 		if (svuid_str != NULL) {
 			wcred.sc_svuid = parse_user(svuid_str);
 			setcred_flags |= SETCREDF_SVUID;
+			gid = getegid();
+			set_all_gids = true;
 		}
 		if (euid_str != NULL) {
 			wcred.sc_uid = parse_user(euid_str);
 			setcred_flags |= SETCREDF_UID;
+			gid = getegid();
+			set_all_gids = true;
 		}
 	} else {
 		pw = getpwuid(geteuid());
@@ -285,20 +294,15 @@ main(int argc, char **argv)
 			err(EXIT_FAILURE, "cannot determine current user");
 	}
 
-	if (!uid_only) {
+	if (!start_from_current_groups) {
 		if (primary_group != NULL) {
 			gid = parse_group(primary_group);
 			set_all_gids = true;
-		} else if (pw != NULL && !uid_only) {
+		} else if (pw != NULL) {
 			gid = pw->pw_gid;
 			set_all_gids = true;
-		} else if (ruid_str != NULL || svuid_str != NULL || euid_str != NULL) {
-			gid = getegid();
-			set_all_gids = true;
-		} else {
-			errx(EXIT_FAILURE, 
-				"must specify '-g' or some user that has an entry in the password database");
-		}
+		} else
+			assert(rgid_str != NULL && svgid_str != NULL && egid_str != NULL);
 
 		if (set_all_gids) {
 			wcred.sc_gid = wcred.sc_rgid = wcred.sc_svgid = gid;
@@ -328,7 +332,7 @@ main(int argc, char **argv)
 
 			while ((tok = strsep(&p, ",")) != NULL) {
 				gid_t g;
-				
+
 				if (*tok == '\0')
 					continue;
 
@@ -360,7 +364,7 @@ main(int argc, char **argv)
 				} else if (tok[0] == '+' || tok[0] == '-') {
 					bool is_add = tok[0] == '+';
 					const char *gstr = tok + 1;
-					
+
 					gid = parse_group(gstr);
 					if (is_add) {
 						supp_groups_add = realloc_groups(supp_groups_add, add_count + 1);
@@ -382,7 +386,7 @@ main(int argc, char **argv)
 			wcred.sc_supp_groups_nb = 0;
 			setcred_flags |= SETCREDF_SUPP_GROUPS;
 		} else {
-			if (pw != NULL && !uid_only) {
+			if (pw != NULL) {
 				gid_t *groups = NULL;
 				int base_count = 0;
 				const long ngroups_alloc = sysconf(_SC_NGROUPS_MAX) + 2;
@@ -408,7 +412,7 @@ main(int argc, char **argv)
 				free(groups);
 			} else {
 				int ngroups = getgroups(0, NULL);
-				
+
 				if (ngroups > 0) {
 					gid_t *groups = malloc(sizeof(gid_t) * ngroups);
 					if (groups == NULL)
