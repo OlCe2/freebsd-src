@@ -50,7 +50,8 @@
 
 CTASSERT(sizeof(struct kerneldumpheader) == 512);
 
-#define	MD_ALIGN(x)	roundup2((off_t)(x), PAGE_SIZE)
+#define	MD_ALIGN(x)		roundup2((x), PAGE_SIZE)
+#define	DEV_ALIGN(x, blocksize)	roundup2((x), (blocksize))
 
 /* Handle buffered writes. */
 static size_t fragsz;
@@ -242,7 +243,7 @@ dumpsys_foreach_chunk(dumpsys_callback_t cb, void *arg)
 	return (seqnr);
 }
 
-static off_t fileofs;
+static uint64_t fileofs;
 
 static int
 cb_dumphdr(struct dump_pa *mdp, int seqnr, void *arg)
@@ -288,9 +289,7 @@ dumpsys_generic(struct dumperinfo *di)
 {
 	static struct kerneldumpheader kdh;
 	Elf_Ehdr ehdr;
-	uint64_t dumpsize;
-	off_t hdrgap;
-	size_t hdrsz;
+	uint64_t dumpsize, hdrgap, hdrsz;
 	int error;
 
 #if MINIDUMP_PAGE_TRACKING == 1
@@ -328,7 +327,7 @@ dumpsys_generic(struct dumperinfo *di)
 	hdrsz = ehdr.e_phoff + ehdr.e_phnum * ehdr.e_phentsize;
 	fileofs = MD_ALIGN(hdrsz);
 	dumpsize += fileofs;
-	hdrgap = fileofs - roundup2((off_t)hdrsz, di->blocksize);
+	hdrgap = fileofs - DEV_ALIGN(hdrsz, di->blocksize);
 
 	dump_init_header(di, &kdh, KERNELDUMPMAGIC, KERNELDUMP_ARCH_VERSION,
 	    dumpsize);
