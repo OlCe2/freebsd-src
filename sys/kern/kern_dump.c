@@ -325,7 +325,7 @@ dumpsys_generic(struct dumperinfo *di)
 	ehdr.e_phnum = dumpsys_foreach_chunk(cb_size, &dumpsize) +
 	    DUMPSYS_NUM_AUX_HDRS;
 	hdrsz = ehdr.e_phoff + ehdr.e_phnum * ehdr.e_phentsize;
-	fileofs = MD_ALIGN(hdrsz);
+	fileofs = DEV_ALIGN(MD_ALIGN(hdrsz), di->blocksize);
 	dumpsize += fileofs;
 	hdrgap = fileofs - DEV_ALIGN(hdrsz, di->blocksize);
 
