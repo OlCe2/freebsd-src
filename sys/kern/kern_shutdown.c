@@ -1680,7 +1680,7 @@ dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh)
 #endif
 
 	if (di->dumper_start != NULL) {
-		error = di->dumper_start(di, key, keysize);
+		error = di->dumper_start(di, kdh, key, keysize);
 	} else {
 		dumpextent = dtoh64(kdh->dumpextent);
 		span = SIZEOF_METADATA + dumpextent + 2 * di->blocksize +
