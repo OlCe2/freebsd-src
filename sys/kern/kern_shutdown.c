@@ -1250,6 +1250,17 @@ dumper_create(const struct dumperinfo *di_template, const char *devname,
 	if (dip == NULL)
 		return (EINVAL);
 
+	/*
+	 * This constraint comes from the fact that we emit a specific header
+	 * before and after the dump (see dump_finish() ->
+	 * dump_write_headers()), each of which we reserve a single block for.
+	 * It does not exist for the live vnode dumper, but since the latter
+	 * uses PAGE_SIZE as the block size, we don't have to special case the
+	 * check for it.
+	 */
+	if (di_template->blocksize < sizeof(struct kerneldumpheader))
+		return (EOPNOTSUPP);
+
 	/* Allocate a new dumper */
 	newdi = malloc(sizeof(*newdi) + strlen(devname) + 1, M_DUMPER,
 	    M_WAITOK | M_ZERO);
@@ -1573,7 +1584,7 @@ dump_write_headers(struct dumperinfo *di, struct kerneldumpheader *kdh)
 
 	hdrsz = sizeof(*kdh);
 	if (hdrsz > di->blocksize)
-		return (ENOMEM);
+		return (EOPNOTSUPP);
 
 #ifdef EKCD
 	kdc = di->kdcrypto;
