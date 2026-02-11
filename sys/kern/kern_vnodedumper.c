@@ -151,7 +151,8 @@ out:
 }
 
 int
-vnode_dumper_start(struct dumperinfo *di, void *key, uint32_t keysize)
+vnode_dumper_start(struct dumperinfo *di, struct kerneldumpheader *kdh,
+    void *key, uint32_t keysize)
 {
 
 	/* Always begin with an offset of zero. */

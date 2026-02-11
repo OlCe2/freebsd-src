@@ -94,8 +94,7 @@ static int	 netdump_enabled_sysctl(SYSCTL_HANDLER_ARGS);
 static int	 netdump_ioctl(struct cdev *dev __unused, u_long cmd,
 		    caddr_t addr, int flags __unused, struct thread *td);
 static int	 netdump_modevent(module_t mod, int type, void *priv);
-static int	 netdump_start(struct dumperinfo *di, void *key,
-		    uint32_t keysize);
+static dumper_start_t	 netdump_start;
 static void	 netdump_unconfigure(void);
 
 /* Must be at least as big as the chunks dumpsys() gives us. */
@@ -283,7 +282,8 @@ netdump_dumper(void *priv __unused, void *virtual, off_t offset, size_t length)
  * Perform any initialization needed prior to transmitting the kernel core.
  */
 static int
-netdump_start(struct dumperinfo *di, void *key, uint32_t keysize)
+netdump_start(struct dumperinfo *di, struct kerneldumpheader *kdh,
+    void *key, uint32_t keysize)
 {
 	struct debugnet_conn_params dcp;
 	struct debugnet_pcb *pcb;
