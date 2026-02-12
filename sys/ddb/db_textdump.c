@@ -79,12 +79,6 @@ static SYSCTL_NODE(_debug_ddb, OID_AUTO, textdump,
     "DDB textdump options");
 
 /*
- * Don't touch the first SIZEOF_METADATA bytes on the dump device.  This is
- * to protect us from metadata and metadata from us.
- */
-#define	SIZEOF_METADATA		(64*1024)
-
-/*
  * Data is written out as a series of files in the ustar tar format.  ustar
  * is a simple streamed format consiting of a series of files prefixed with
  * headers, and all padded to 512-byte block boundaries, which maps
