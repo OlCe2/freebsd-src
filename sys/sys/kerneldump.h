@@ -38,6 +38,10 @@
 #ifndef _SYS_KERNELDUMP_H
 #define _SYS_KERNELDUMP_H
 
+#ifdef __amd64__
+#define OS_HIBERNATE_SUPPORT
+#endif
+
 #include <sys/param.h>
 #include <sys/conf.h>
 
@@ -134,6 +138,19 @@ kerneldump_parity(struct kerneldumpheader *kdhp)
 }
 
 #ifdef _KERNEL
+
+#include <sys/_mutex.h>
+
+/*
+ * XXX - These temporarily made public, as these are also needed by
+ * 'kern_dump.c'.  All code related to dumper configuration should be moved to
+ * 'kern_dump.c', which will remove the need for exposing these here.
+ */
+extern struct mtx dumpconf_list_lk;
+extern TAILQ_HEAD(dumpconflist, dumperinfo) dumper_configs;
+
+bool has_dumpers(void);
+
 struct dump_pa {
 	vm_paddr_t pa_start;
 	vm_paddr_t pa_size;
@@ -152,7 +169,7 @@ typedef int dumpsys_callback_t(struct dump_pa *, int, void *);
 int dumpsys_foreach_chunk(dumpsys_callback_t, void *);
 int dumpsys_cb_dumpdata(struct dump_pa *, int, void *);
 int dumpsys_buf_seek(struct dumperinfo *, size_t);
-int dumpsys_buf_write(struct dumperinfo *, char *, size_t);
+int dumpsys_buf_write(struct dumperinfo *, const char *, size_t);
 int dumpsys_buf_flush(struct dumperinfo *);
 
 void dumpsys_gen_pa_init(void);
@@ -178,6 +195,35 @@ EVENTHANDLER_DECLARE(livedumper_start, livedump_start_fn);
 EVENTHANDLER_DECLARE(livedumper_dump, livedump_dump_fn);
 EVENTHANDLER_DECLARE(livedumper_finish, livedump_finish_fn);
 
-#endif
+
+#ifdef OS_HIBERNATE_SUPPORT
+/* Hibernate support. */
+
+/*
+ * XXX
+ *
+ * 1. Current allocation strategy is very simple (avoid lower physical
+ *    addresses) and may need to be revised to instead be based on the initial
+ *    EFI map at previous boot.
+ * 2. Some of these may become machine-dependent at some point.
+ */
+
+/* Sizes in bytes. */
+#define HIBERNATE_CONTIG_SPARE_SIZE	(1 * 1024 * 1024)
+#define HIBERNATE_SPARE_SIZE		(128 * 1024 * 1024)
+#define HIBERNATE_PADDR_MIN		(2 *				\
+    (HIBERNATE_CONTIG_SPARE_SIZE + HIBERNATE_SPARE_SIZE))
+
+struct hibernate_cb;
+struct hibernate_pcb;
+
+int dumpsys_hibernate_create_hcb(uint64_t _hardware_signature,
+    struct hibernate_cb **_hcb_out);
+void dumpsys_hibernate_free_hcb(struct hibernate_cb *);
+int dump_for_hibernate(const struct hibernate_cb *,
+    const struct hibernate_pcb *);
+#endif /* OS_HIBERNATE_SUPPORT */
+
+#endif /* _KERNEL */
 
 #endif /* _SYS_KERNELDUMP_H */

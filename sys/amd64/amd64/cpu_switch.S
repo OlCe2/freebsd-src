@@ -383,10 +383,10 @@ ENTRY(savectx)
 END(savectx)
 
 /*
- * resumectx(pcb)
- * Resuming processor state from pcb.
+ * %rdi = pcb
+ * %rsi = 0 to restore stack and return to %rip, 1 to return to caller
  */
-ENTRY(resumectx)
+resumectx_common:
 	/* Switch to KPML5/4phys. */
 	movq	KPML4phys,%rax
 	movq	KPML5phys,%rcx
@@ -479,22 +479,44 @@ ENTRY(resumectx)
 	movq	PCB_DR7(%rdi),%rax
 	movq	%rax,%dr7
 
-	/* Restore other callee saved registers. */
+	/* Restore other callee saved registers, except RSP. */
 	movq	PCB_R15(%rdi),%r15
 	movq	PCB_R14(%rdi),%r14
 	movq	PCB_R13(%rdi),%r13
 	movq	PCB_R12(%rdi),%r12
 	movq	PCB_RBP(%rdi),%rbp
-	movq	PCB_RSP(%rdi),%rsp
 	movq	PCB_RBX(%rdi),%rbx
 
-	/* Restore return address. */
+	/* Restore RSP and return address? */
+	testq	%rsi,%rsi
+	jnz	1f
+
+	/* Yes. */
+	movq	PCB_RSP(%rdi),%rsp
 	movq	PCB_RIP(%rdi),%rax
 	movq	%rax,(%rsp)
-
 	xorl	%eax,%eax
-	ret
+
+1:	ret
+
+/*
+ * resumectx(pcb)
+ * Resuming processor state from pcb.
+ */
+ENTRY(resumectx)
+	xorl	%esi,%esi
+	jmp	resumectx_common
 END(resumectx)
 
+/*
+ * resumectx_norip(pcb)
+ *
+ * Resume processor state from pcb, except for the instruction pointer (returns
+ * to the caller).
+ */
+ENTRY(resumectx_return)
+	movl	$1,%esi
+	jmp	resumectx_common
+END(resumectx_return)
 
 	.section .note.GNU-stack,"",%progbits

@@ -37,6 +37,7 @@
 #include <sys/param.h>
 #include <sys/eventhandler.h>
 #include <sys/kernel.h>
+#include <sys/kerneldump.h>
 #include <sys/proc.h>
 #include <sys/fcntl.h>
 #include <sys/malloc.h>
@@ -65,6 +66,9 @@
 #endif
 #include <machine/resource.h>
 #include <machine/bus.h>
+#ifdef OS_HIBERNATE_SUPPORT
+#include <machine/hibernate.h>
+#endif
 #include <sys/rman.h>
 #include <isa/isavar.h>
 #include <isa/pnpvar.h>
@@ -105,7 +109,7 @@ struct acpi_interface {
 
 struct acpi_wake_prep_context {
     struct acpi_softc	*sc;
-    enum power_stype	stype;
+    int			 sstate;
 };
 
 static char *sysres_ids[] = { "PNP0C01", "PNP0C02", NULL };
@@ -182,10 +186,10 @@ static void	acpi_shutdown_final(void *arg, int howto);
 static void	acpi_enable_fixed_events(struct acpi_softc *sc);
 static void	acpi_resync_clock(struct acpi_softc *sc);
 static int	acpi_wake_sleep_prep(struct acpi_softc *sc, ACPI_HANDLE handle,
-		    enum power_stype stype);
+		    int sstate);
 static int	acpi_wake_run_prep(struct acpi_softc *sc, ACPI_HANDLE handle,
-		    enum power_stype stype);
-static int	acpi_wake_prep_walk(struct acpi_softc *sc, enum power_stype stype);
+		    int sstate);
+static int	acpi_wake_prep_walk(struct acpi_softc *sc, int sstate);
 static int	acpi_wake_sysctl_walk(device_t dev);
 static int	acpi_wake_set_sysctl(SYSCTL_HANDLER_ARGS);
 static int	acpi_supported_sleep_state_sysctl(SYSCTL_HANDLER_ARGS);
@@ -331,6 +335,12 @@ TUNABLE_INT("debug.acpi.quirks", &acpi_quirks);
 int acpi_susp_bounce;
 SYSCTL_INT(_debug_acpi, OID_AUTO, suspend_bounce, CTLFLAG_RW,
     &acpi_susp_bounce, 0, "Don't actually suspend, just test devices.");
+
+#ifdef OS_HIBERNATE_SUPPORT
+bool acpi_hibernate_susp_bounce = true;
+SYSCTL_BOOL(_debug_acpi, OID_AUTO, hibernate_suspend_bounce, CTLFLAG_RW,
+    &acpi_hibernate_susp_bounce, 0, "Don't actually hibernate, just test.");
+#endif
 
 #if defined(__amd64__) || defined(__i386__)
 int acpi_override_isa_irq_polarity;
@@ -645,10 +655,21 @@ acpi_attach(device_t dev)
 	UINT8 TypeA, TypeB;
 
 	if (ACPI_SUCCESS(AcpiGetSleepTypeData(state, &TypeA, &TypeB))) {
+	    const enum power_stype stype = acpi_sstate_to_stype(state);
+
+	    MPASS(stype != POWER_STYPE_UNKNOWN);
 	    acpi_supported_sstates[state] = true;
-	    acpi_supported_stypes[acpi_sstate_to_stype(state)] = true;
+	    acpi_supported_stypes[stype] = true;
 	}
     }
+    MPASS(!acpi_supported_stypes[POWER_STYPE_OS_HIBERNATE]);
+#ifdef OS_HIBERNATE_SUPPORT
+    /*
+     * OS-initiated hibernate is unconditional.  If S4 is not supported, we will
+     * just poweroff the machine by the usual means.
+     */
+    acpi_supported_stypes[POWER_STYPE_OS_HIBERNATE] = true;
+#endif
 
     /*
      * Dispatch the default sleep type to devices.  The lid switch is set
@@ -824,11 +845,9 @@ acpi_stype_to_sstate(struct acpi_softc *sc, enum power_stype stype)
 	case POWER_STYPE_POWEROFF:
 		return (ACPI_STATE_S5);
 	case POWER_STYPE_SUSPEND_TO_IDLE:
-	case POWER_STYPE_COUNT:
-	case POWER_STYPE_UNKNOWN:
+	default:
 		return (ACPI_STATE_UNKNOWN);
 	}
-	return (ACPI_STATE_UNKNOWN);
 }
 
 /*
@@ -3308,6 +3327,7 @@ acpi_sleep_force_task(void *context)
     if (ACPI_FAILURE(acpi_EnterSleepState(sc, sc->acpi_next_stype)))
 	device_printf(sc->acpi_dev, "force sleep state %s failed\n",
 	    power_stype_to_name(sc->acpi_next_stype));
+    sc->acpi_next_stype = POWER_STYPE_AWAKE;
 }
 
 static void
@@ -3346,14 +3366,18 @@ acpi_ReqSleepState(struct acpi_softc *sc, enum power_stype stype)
 	return (EOPNOTSUPP);
 
     /*
-     * If a reboot/shutdown/suspend request is already in progress or
-     * suspend is blocked due to an upcoming shutdown, just return.
+     * If a reboot/shutdown request, or a sleep request via acpi_ReqSleepState
+     * but not yet acknowledged through  is already in progress or suspend is blocked
+     * due to an upcoming shutdown, just return.
      */
     if (rebooting || sc->acpi_next_stype != POWER_STYPE_AWAKE ||
 	suspend_blocked)
 	return (0);
 
-    /* Wait until sleep is enabled. */
+    /*
+     * Wait until sleep is enabled (another request is in progress, or it's too
+     * early after it or after boot).
+     */
     while (sc->acpi_sleep_disabled) {
 	AcpiOsSleep(1000);
     }
@@ -3461,7 +3485,8 @@ acpi_AckSleepState(struct apm_clone_data *clone, int error)
     ret = 0;
     if (sleeping) {
 	if (ACPI_FAILURE(acpi_EnterSleepState(sc, sc->acpi_next_stype)))
-		ret = ENODEV;
+	    ret = ENODEV;
+	sc->acpi_next_stype = POWER_STYPE_AWAKE;
     }
     return (ret);
 #else
@@ -3506,10 +3531,11 @@ acpi_sleep_disable(struct acpi_softc *sc)
 
 enum acpi_sleep_state {
     ACPI_SS_NONE	= 0,
-    ACPI_SS_GPE_SET	= 1 << 0,
-    ACPI_SS_DEV_SUSPEND	= 1 << 1,
-    ACPI_SS_SLP_PREP	= 1 << 2,
-    ACPI_SS_SLEPT	= 1 << 3,
+    ACPI_SS_SUSP_EH	= 1 << 0,
+    ACPI_SS_GPE_SET	= 1 << 1,
+    ACPI_SS_DEV_SUSPEND	= 1 << 2,
+    ACPI_SS_SLP_PREP	= 1 << 3,
+    ACPI_SS_SLEPT	= 1 << 4,
 };
 
 static void
@@ -3620,10 +3646,46 @@ do_idle(struct acpi_softc *sc, enum acpi_sleep_state *slp_state,
 }
 #endif
 
+#ifdef OS_HIBERNATE_SUPPORT
+/*
+ * XXX - To move elsewhere, maybe in a new 'subr_suspend.c' file.
+ */
+static void
+suspend_other_cpus(cpuset_t *const susp_cpus)
+{
+#ifdef SMP
+	*susp_cpus = all_cpus;
+	/*
+	 * XXX - Done in other places too but generally incorrect as this is
+	 * racy and multiple suspensions/stops are anyway not supported.
+	 * Though, this is probably enough to support the "call from debugger"
+	 * case.
+	 */
+	CPU_ANDNOT(susp_cpus, susp_cpus, &stopped_cpus);
+	CPU_CLR(PCPU_GET(cpuid), susp_cpus);
+	if (!CPU_EMPTY(susp_cpus))
+		suspend_cpus(*susp_cpus);
+#endif
+	scheduler_stopped = true;
+}
+
+static void
+resume_other_cpus(const cpuset_t *const susp_cpus)
+{
+    scheduler_stopped = false;
+#ifdef SMP
+    if (!CPU_EMPTY(susp_cpus))
+	resume_cpus(*susp_cpus);
+#endif
+}
+
+#endif
+
 /*
  * Enter the desired system sleep state.
  *
- * Currently we support S1-S5 and suspend-to-idle, but S4 is only S4BIOS.
+ * Accepts S0 Idle (power sleep type: SUSPEND_TO_IDLE) and S1 to S5 (power sleep
+ * types: STANDBY (maps to S1 or S2), SUSPEND_TO_MEM, HIBERNATE, POWEROFF).
  */
 static ACPI_STATUS
 acpi_EnterSleepState(struct acpi_softc *sc, enum power_stype stype)
@@ -3631,26 +3693,59 @@ acpi_EnterSleepState(struct acpi_softc *sc, enum power_stype stype)
     register_t intr;
     ACPI_STATUS status;
     enum acpi_sleep_state slp_state;
-    int acpi_sstate;
+    int acpi_sstate = ACPI_STATE_UNKNOWN;
 
     ACPI_FUNCTION_TRACE_U32((char *)(uintptr_t)__func__, stype);
 
     if (stype <= POWER_STYPE_AWAKE || stype >= POWER_STYPE_COUNT)
 	return_ACPI_STATUS (AE_BAD_PARAMETER);
     if (!acpi_supported_stypes[stype]) {
-	device_printf(sc->acpi_dev, "Sleep type %s not supported on this "
-	    "platform\n", power_stype_to_name(stype));
-	return (AE_SUPPORT);
+	device_printf(sc->acpi_dev,
+		      "Sleep type %s not supported on this platform\n",
+		      power_stype_to_name(stype));
+	return_ACPI_STATUS (AE_SUPPORT);
     }
 
-    acpi_sstate = acpi_stype_to_sstate(sc, stype);
+    if (stype == POWER_STYPE_OS_HIBERNATE) {
+#ifndef OS_HIBERNATE_SUPPORT
+	KASSERT(stype != POWER_STYPE_OS_HIBERNATE,
+		("%s: Platform does not support OS hibernate, "
+		 "but that request could pass the initial guard.", __func__));
+	return_ACPI_STATUS (AE_NOT_IMPLEMENTED);
+#else
+	/*
+	 * Without a dumper, we cannot proceed.  Because there's no hold on
+	 * dumpers, this has to be retested once other CPUs have been
+	 * stopped, but in most cases the problem will be caught here,
+	 * before we even start suspending devices (in vain).
+	 */
+	if (!has_dumpers()) {
+	    device_printf(sc->acpi_dev,
+			  "Hibernate: No dump device configured!");
+	    return_ACPI_STATUS (AE_NOT_CONFIGURED);
+	}
+	if (!acpi_supported_sstates[ACPI_STATE_S4]) {
+	    /*
+	     * Print the warning now instead of just before shutdown to give
+	     * users more chance to see the message.
+	     */
+	    device_printf(sc->acpi_dev,
+			  "Will hibernate using power-off, "
+			  "wake events may not work.\n");
+	    MPASS(acpi_sstate == ACPI_STATE_UNKNOWN);
+	} else
+	    acpi_sstate = ACPI_STATE_S4;
+#endif
+    } else
+	acpi_sstate = acpi_stype_to_sstate(sc, stype);
 
     /* Re-entry once we're suspending is not allowed. */
     status = acpi_sleep_disable(sc);
     if (ACPI_FAILURE(status)) {
 	device_printf(sc->acpi_dev,
-	    "suspend request ignored (not ready yet)\n");
-	return (status);
+		      "Suspend request ignored (other request in progress "
+		      "or not ready yet)\n");
+	return_ACPI_STATUS (status);
     }
 
     if (stype == POWER_STYPE_POWEROFF) {
@@ -3662,11 +3757,36 @@ acpi_EnterSleepState(struct acpi_softc *sc, enum power_stype stype)
 	return_ACPI_STATUS (AE_OK);
     }
 
-    EVENTHANDLER_INVOKE(power_suspend_early, stype);
-    stop_all_proc();
-    suspend_all_fs();
-    EVENTHANDLER_INVOKE(power_suspend, stype);
+    slp_state = ACPI_SS_NONE;
 
+    EVENTHANDLER_INVOKE(power_suspend_early, stype);
+    device_printf(sc->acpi_dev, "Stopping processes...\n");
+    stop_all_proc();
+    device_printf(sc->acpi_dev, "Suspending filesystems...\n");
+    suspend_all_fs();
+#ifdef OS_HIBERNATE_SUPPORT
+    if (stype != POWER_STYPE_OS_HIBERNATE) {
+#endif
+	EVENTHANDLER_INVOKE(power_suspend, stype);
+	slp_state |= ACPI_SS_SUSP_EH;
+#ifdef OS_HIBERNATE_SUPPORT
+    } else {
+	/*
+	 * XXX - We don't currently invoke the 'power_suspend' event handler, as
+	 * disk drivers shutdown the disks which makes the dump fail.
+	 */
+	/*
+	 * TODO - Deactivate the swap partitions overlapping with dumping devices.
+	 * TODO - Check that we are really flushing everything that needs to here.
+	 * TODO - Get rid of the buffer and page cache (when we are able to
+	 * forego saving all physical pages).
+	 */
+    }
+#endif
+
+    /*
+     * XXX - BSP instead of CPU 0 (although that's the same on amd64).
+     */
 #ifdef EARLY_AP_STARTUP
     MPASS(mp_ncpus == 1 || smp_started);
     thread_lock(curthread);
@@ -3680,18 +3800,19 @@ acpi_EnterSleepState(struct acpi_softc *sc, enum power_stype stype)
     }
 #endif
 
+    sc->acpi_stype = stype;
+
     /*
      * Be sure to hold bus topology lock across DEVICE_SUSPEND/RESUME.
      */
     bus_topo_lock();
 
-    slp_state = ACPI_SS_NONE;
-
-    sc->acpi_stype = stype;
-
     /* Enable any GPEs as appropriate and requested by the user. */
-    acpi_wake_prep_walk(sc, stype);
-    slp_state |= ACPI_SS_GPE_SET;
+    device_printf(sc->acpi_dev, "Enabling wake GPEs...\n");
+    if (stype != POWER_STYPE_OS_HIBERNATE) {
+	acpi_wake_prep_walk(sc, acpi_sstate);
+	slp_state |= ACPI_SS_GPE_SET;
+    }
 
     /*
      * Inform all devices that we are going to sleep.  If at least one
@@ -3701,14 +3822,159 @@ acpi_EnterSleepState(struct acpi_softc *sc, enum power_stype stype)
      * followed by a "real thing" pass would be better, but the current
      * bus interface does not provide for this.
      */
-    if (DEVICE_SUSPEND(root_bus) != 0) {
-        device_printf(sc->acpi_dev, "device_suspend failed\n");
-        goto backout;
+    /*
+     * XXX - OS-hibernate: Hangs in VirtualBox, so just forego suspending
+     * devices for now.
+     */
+    if (stype != POWER_STYPE_OS_HIBERNATE) {
+	device_printf(sc->acpi_dev, "Suspending devices...\n");
+	if (DEVICE_SUSPEND(root_bus) != 0) {
+	    device_printf(sc->acpi_dev, "device_suspend failed\n");
+	    goto backout;
+	}
+	/*
+	 * XXX - When this block is run also for POWER_STYPE_OS_HIBERNATE,
+	 * forego invoking 'acpi_post_dev_suspend' until after the second
+	 * suspend.
+	 */
+	EVENTHANDLER_INVOKE(acpi_post_dev_suspend, stype);
+	slp_state |= ACPI_SS_DEV_SUSPEND;
     }
-    EVENTHANDLER_INVOKE(acpi_post_dev_suspend, stype);
-    slp_state |= ACPI_SS_DEV_SUSPEND;
+
+#ifdef OS_HIBERNATE_SUPPORT
+    if (stype == POWER_STYPE_OS_HIBERNATE) {
+	/* FACS hardware signature (in the lower 32-bit). */
+	const uint64_t hardware_signature = AcpiGbl_FACS != NULL ?
+	    AcpiGbl_FACS->HardwareSignature : 0;
+	struct hibernate_cb *hcb = NULL;
+	struct hibernate_pcb *hpcb;
+	cpuset_t susp_cpus;
+	register_t intr_state;
+	int error;
+
+	device_printf(sc->acpi_dev, "Creating hibernate control block...\n");
+	error = dumpsys_hibernate_create_hcb(hardware_signature, &hcb);
+	if (error != 0) {
+	    device_printf(sc->acpi_dev, "Not enough specific memory.\n");
+	    goto backout;
+	}
+	hpcb = malloc(sizeof(*hpcb), M_TEMP, M_WAITOK);
+
+	device_printf(sc->acpi_dev, "Suspending other CPUs...\n");
+	suspend_other_cpus(&susp_cpus);
+
+	intr_state = intr_disable();
+
+	/*
+	 * TODO - Take a snapshot of the whole memory, or just enough to stay
+	 * consistent.
+	 *
+	 * Allocate memory a little earlier (before device suspension)?
+	 *
+	 * slp_state |= ACPI_SS_SNAPSHOT; to mark memory allocation (or some
+	 * other means to know we have to deallocate)?
+	 */
+
+	/*
+	 * This is where the current CPU context is saved, and from where we
+	 * return on resume.
+	 */
+	error = dumpsys_hibernate_savectx(hpcb);
+
+	switch (error) {
+	case 0:
+	    break;
+
+	case EJUSTRETURN:
+	    resume_other_cpus(&susp_cpus);
+	    intr_restore(intr_state);
+	    /* Free memory used to hibernate. */
+	    free(hpcb, M_TEMP);
+	    dumpsys_hibernate_free_hcb(hcb);
+	    /*
+	     * We fully powered down, forget about restoring GPE state.
+	     */
+	    if (!acpi_supported_sstates[ACPI_STATE_S4])
+		slp_state &= ~ACPI_SS_GPE_SET;
+	    /*
+	     * Context has just been restored, we execute the normal
+	     * resume procedure.
+	     */
+	    status = AE_OK;
+	    goto backout;
+
+	default:
+	    __assert_unreachable();
+	}
+
+	/*
+	 * XXX - Re-activate the dump device.
+	 *
+	 * For now, we reactivate all devices, as re-activating just the dump device
+	 * requires some infrastructure work.
+	 */
+	if ((slp_state & ACPI_SS_DEV_SUSPEND) != 0) {
+	    device_printf(sc->acpi_dev,
+			  "Resuming the dump device (currently, all devices)\n");
+	    DEVICE_RESUME(root_bus);
+	    slp_state &= ~ACPI_SS_DEV_SUSPEND;
+	}
+
+	/* Save the image. */
+	device_printf(sc->acpi_dev, "Saving the dump image...\n");
+	error = dump_for_hibernate(hcb, hpcb);
+
+	resume_other_cpus(&susp_cpus);
+	intr_restore(intr_state);
+
+	if (error != 0) {
+	    device_printf(sc->acpi_dev, "Could not dump the image!\n");
+	    status = AE_NO_HANDLER; /* XXX - Something. */
+	    goto backout;
+	}
+
+	/*
+	 * XXX - Retire this bool and replace with 'acpi_susp_bounce' (different
+	 * default) when image saving is mature enough.
+	 */
+	if (acpi_hibernate_susp_bounce) {
+	    /* Free memory used to hibernate. */
+	    free(hpcb, M_TEMP);
+	    dumpsys_hibernate_free_hcb(hcb);
+	    goto backout;
+	}
+
+	if (!acpi_supported_sstates[ACPI_STATE_S4]) {
+	    /*
+	     * Not going to follow the usual suspend path, as we are going to
+	     * do a regular shutdown right now (without syncing).
+	     */
+	    kern_reboot(RB_POWEROFF | RB_NOSYNC);
+	    /* NOTREACHED */
+	}
+
+	/*
+	 * XXX - Re-suspend the dump device.
+	 *
+	 * As above, for now, re-suspending all peripherals.
+	 */
+	device_printf(sc->acpi_dev,
+		      "Suspending the dump device (currently, all devices)...\n");
+	EVENTHANDLER_INVOKE(power_suspend, stype);
+	slp_state |= ACPI_SS_SUSP_EH;
+	if (DEVICE_SUSPEND(root_bus) != 0) {
+	    device_printf(sc->acpi_dev, "Second device suspend failed\n");
+	    goto backout;
+	}
+	slp_state |= ACPI_SS_DEV_SUSPEND;
+    }
+#endif /* OS_HIBERNATE_SUPPORT */
+
+    MPASS(acpi_sstate != ACPI_STATE_UNKNOWN);
 
     if (stype != POWER_STYPE_SUSPEND_TO_IDLE) {
+	device_printf(sc->acpi_dev, "Preparing to enter state %s...\n",
+		      acpi_sstate_to_sname(acpi_sstate));
 	status = acpi_EnterSleepStatePrep(sc->acpi_dev, acpi_sstate);
 	if (ACPI_FAILURE(status))
 	    goto backout;
@@ -3718,6 +3984,7 @@ acpi_EnterSleepState(struct acpi_softc *sc, enum power_stype stype)
     if (sc->acpi_sleep_delay > 0)
 	DELAY(sc->acpi_sleep_delay * 1000000);
 
+    device_printf(sc->acpi_dev, "Suspending clock and interrupts...\n");
     suspendclock();
     intr = intr_disable();
     switch (stype) {
@@ -3726,6 +3993,7 @@ acpi_EnterSleepState(struct acpi_softc *sc, enum power_stype stype)
 	break;
     case POWER_STYPE_FW_SUSPEND:
     case POWER_STYPE_FW_HIBERNATE:
+    case POWER_STYPE_OS_HIBERNATE:
 	do_sleep(sc, &slp_state, intr, acpi_sstate);
 	break;
     case POWER_STYPE_SUSPEND_TO_IDLE:
@@ -3733,12 +4001,10 @@ acpi_EnterSleepState(struct acpi_softc *sc, enum power_stype stype)
 	do_idle(sc, &slp_state, intr);
 	break;
 #endif
-    case POWER_STYPE_AWAKE:
-    case POWER_STYPE_POWEROFF:
-    case POWER_STYPE_COUNT:
-    case POWER_STYPE_UNKNOWN:
-	__unreachable();
+    default:
+	__assert_unreachable();
     }
+    device_printf(sc->acpi_dev, "Interrupts resumed, resuming clock...\n");
     resumeclock();
 
     /*
@@ -3747,16 +4013,20 @@ acpi_EnterSleepState(struct acpi_softc *sc, enum power_stype stype)
      */
 backout:
     if ((slp_state & ACPI_SS_GPE_SET) != 0) {
-	acpi_wake_prep_walk(sc, stype);
+	device_printf(sc->acpi_dev, "Disabling wake GPEs...\n");
+	acpi_wake_prep_walk(sc, acpi_sstate);
 	sc->acpi_stype = POWER_STYPE_AWAKE;
 	slp_state &= ~ACPI_SS_GPE_SET;
     }
     if ((slp_state & ACPI_SS_DEV_SUSPEND) != 0) {
 	EVENTHANDLER_INVOKE(acpi_pre_dev_resume, stype);
+	device_printf(sc->acpi_dev, "Resuming devices...\n");
 	DEVICE_RESUME(root_bus);
 	slp_state &= ~ACPI_SS_DEV_SUSPEND;
     }
     if ((slp_state & ACPI_SS_SLP_PREP) != 0) {
+	device_printf(sc->acpi_dev, "Waking-up from state %s...\n",
+		      acpi_sstate_to_sname(acpi_sstate));
 	AcpiLeaveSleepState(acpi_sstate);
 	slp_state &= ~ACPI_SS_SLP_PREP;
     }
@@ -3769,9 +4039,6 @@ backout:
 	acpi_enable_fixed_events(sc);
 	slp_state &= ~ACPI_SS_SLEPT;
     }
-    sc->acpi_next_stype = POWER_STYPE_AWAKE;
-
-    MPASS(slp_state == ACPI_SS_NONE);
 
     bus_topo_unlock();
 
@@ -3787,10 +4054,17 @@ backout:
     }
 #endif
 
+    device_printf(sc->acpi_dev, "Resuming filesystems...\n");
     resume_all_fs();
+    device_printf(sc->acpi_dev, "Resuming processes...\n");
     resume_all_proc();
 
-    EVENTHANDLER_INVOKE(power_resume, stype);
+    if ((slp_state & ACPI_SS_SUSP_EH) != 0) {
+	EVENTHANDLER_INVOKE(power_resume, stype);
+	slp_state &= ~ACPI_SS_SUSP_EH;
+    }
+
+    MPASS(slp_state == ACPI_SS_NONE);
 
     /* Allow another sleep request after a while. */
     callout_schedule(&acpi_sleep_timer, hz * ACPI_MINIMUM_AWAKETIME);
@@ -3798,6 +4072,10 @@ backout:
     /* Run /etc/rc.resume after we are back. */
     if (devctl_process_running())
 	acpi_UserNotify("Resume", ACPI_ROOT_OBJECT, stype);
+
+    if (ACPI_FAILURE(status))
+	device_printf(sc->acpi_dev, "Sleep failed: %s\n",
+		      AcpiFormatException(status));
 
     return_ACPI_STATUS (status);
 }
@@ -3848,10 +4126,8 @@ acpi_wake_set_enable(device_t dev, int enable)
 }
 
 static int
-acpi_wake_sleep_prep(struct acpi_softc *sc, ACPI_HANDLE handle,
-    enum power_stype stype)
+acpi_wake_sleep_prep(struct acpi_softc *sc, ACPI_HANDLE handle, int sstate)
 {
-    int sstate;
     struct acpi_prw_data prw;
     device_t dev;
 
@@ -3859,8 +4135,6 @@ acpi_wake_sleep_prep(struct acpi_softc *sc, ACPI_HANDLE handle,
     if (acpi_parse_prw(handle, &prw) != 0)
 	return (ENXIO);
     dev = acpi_get_device(handle);
-
-    sstate = acpi_stype_to_sstate(sc, stype);
 
     /*
      * The destination sleep state must be less than (i.e., higher power)
@@ -3873,23 +4147,21 @@ acpi_wake_sleep_prep(struct acpi_softc *sc, ACPI_HANDLE handle,
 	AcpiSetGpeWakeMask(prw.gpe_handle, prw.gpe_bit, ACPI_GPE_DISABLE);
 	if (bootverbose)
 	    device_printf(dev, "wake_prep disabled wake for %s (%s)\n",
-		acpi_name(handle), power_stype_to_name(stype));
+		acpi_name(handle), acpi_sstate_to_sname(sstate));
     } else if (dev && (acpi_get_flags(dev) & ACPI_FLAG_WAKE_ENABLED) != 0) {
 	acpi_pwr_wake_enable(handle, 1);
 	acpi_SetInteger(handle, "_PSW", 1);
 	if (bootverbose)
 	    device_printf(dev, "wake_prep enabled for %s (%s)\n",
-		acpi_name(handle), power_stype_to_name(stype));
+		acpi_name(handle), acpi_sstate_to_sname(sstate));
     }
 
     return (0);
 }
 
 static int
-acpi_wake_run_prep(struct acpi_softc *sc, ACPI_HANDLE handle,
-    enum power_stype stype)
+acpi_wake_run_prep(struct acpi_softc *sc, ACPI_HANDLE handle, int sstate)
 {
-    int sstate;
     struct acpi_prw_data prw;
     device_t dev;
 
@@ -3902,8 +4174,6 @@ acpi_wake_run_prep(struct acpi_softc *sc, ACPI_HANDLE handle,
     dev = acpi_get_device(handle);
     if (dev == NULL || (acpi_get_flags(dev) & ACPI_FLAG_WAKE_ENABLED) == 0)
 	return (0);
-
-    sstate = acpi_stype_to_sstate(sc, stype);
 
     /*
      * If this GPE couldn't be enabled for the previous sleep state, it was
@@ -3932,20 +4202,20 @@ acpi_wake_prep(ACPI_HANDLE handle, UINT32 level, void *context, void **status)
 
     /* If suspending, run the sleep prep function, otherwise wake. */
     if (AcpiGbl_SystemAwakeAndRunning)
-	acpi_wake_sleep_prep(ctx->sc, handle, ctx->stype);
+	acpi_wake_sleep_prep(ctx->sc, handle, ctx->sstate);
     else
-	acpi_wake_run_prep(ctx->sc, handle, ctx->stype);
+	acpi_wake_run_prep(ctx->sc, handle, ctx->sstate);
     return (AE_OK);
 }
 
 /* Walk the tree rooted at acpi0 to prep devices for suspend/resume. */
 static int
-acpi_wake_prep_walk(struct acpi_softc *sc, enum power_stype stype)
+acpi_wake_prep_walk(struct acpi_softc *sc, int sstate)
 {
     ACPI_HANDLE sb_handle;
     struct acpi_wake_prep_context ctx = {
 	.sc = sc,
-	.stype = stype,
+	.sstate = sstate,
     };
 
     if (ACPI_SUCCESS(AcpiGetHandle(ACPI_ROOT_OBJECT, "\\_SB_", &sb_handle)))

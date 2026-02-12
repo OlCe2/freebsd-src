@@ -131,6 +131,7 @@ void	set_pcb_flags(struct pcb *pcb, const u_int flags);
 void	set_pcb_flags_raw(struct pcb *pcb, const u_int flags);
 int	savectx(struct pcb *) __returns_twice;
 void	resumectx(struct pcb *);
+void	resumectx_return(struct pcb *);
 
 /* Ensure that pcb_gsbase and pcb_fsbase are up to date */
 #define	update_pcb_bases(pcb)	set_pcb_flags((pcb), PCB_FULL_IRET)
