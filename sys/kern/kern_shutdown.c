@@ -229,12 +229,11 @@ bool dumped_core __read_mostly;		/* system successfully dumped core */
  * Used to serialize between sysctl kern.shutdown.dumpdevname and list
  * modifications via ioctl.
  */
-static struct mtx dumpconf_list_lk;
+struct mtx dumpconf_list_lk;
 MTX_SYSINIT(dumper_configs, &dumpconf_list_lk, "dumper config list", MTX_DEF);
 
 /* Our selected dumper(s). */
-static TAILQ_HEAD(dumpconflist, dumperinfo) dumper_configs =
-    TAILQ_HEAD_INITIALIZER(dumper_configs);
+struct dumpconflist dumper_configs = TAILQ_HEAD_INITIALIZER(dumper_configs);
 
 /* Context information for dump-debuggers, saved by the dump_savectx() macro. */
 struct pcb dumppcb;			/* Registers. */
