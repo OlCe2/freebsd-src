@@ -1629,12 +1629,6 @@ dump_write_headers(struct dumperinfo *di, struct kerneldumpheader *kdh)
 }
 
 /*
- * Don't touch the first SIZEOF_METADATA bytes on the dump device.  This is to
- * protect us from metadata and metadata from us.
- */
-#define	SIZEOF_METADATA		(64 * 1024)
-
-/*
  * Do some preliminary setup for a kernel dump: initialize state for encryption,
  * if requested, and make sure that we have enough space on the dump device.
  *

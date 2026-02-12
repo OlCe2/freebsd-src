@@ -55,6 +55,12 @@
 #define	htod64(x)	(x)
 #endif
 
+/*
+ * Don't touch the first SIZEOF_METADATA bytes on the dump device.  This is to
+ * protect us from metadata and metadata from us.
+ */
+#define	SIZEOF_METADATA			(64 * 1024)
+
 #define	KERNELDUMP_COMP_NONE		0
 #define	KERNELDUMP_COMP_GZIP		1
 #define	KERNELDUMP_COMP_ZSTD		2
