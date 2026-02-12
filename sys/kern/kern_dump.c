@@ -43,6 +43,7 @@
 #include <vm/vm_dumpset.h>
 #include <vm/pmap.h>
 
+#include <machine/_inttypes.h>
 #include <machine/dump.h>
 #include <machine/elf.h>
 #include <machine/md_var.h>
@@ -190,8 +191,8 @@ dumpsys_cb_dumpdata(struct dump_pa *mdp, int seqnr, void *arg)
 	if (maxdumppgs == 0)	/* seatbelt */
 		maxdumppgs = 1;
 
-	printf("  chunk %d: %juMB (%ju pages)", seqnr, (uintmax_t)PG2MB(pgs),
-	    (uintmax_t)pgs);
+	printf("  chunk %d: %" PRIu64 "MB (%" PRIu64 " pages)", seqnr,
+	    PG2MB(pgs), pgs);
 
 	dumpsys_wbinv_all();
 	while (pgs) {
@@ -201,7 +202,7 @@ dumpsys_cb_dumpdata(struct dump_pa *mdp, int seqnr, void *arg)
 		sz = chunk << PAGE_SHIFT;
 		counter += sz;
 		if (counter >> 24) {
-			printf(" %ju", (uintmax_t)PG2MB(pgs));
+			printf(" %" PRIu64, PG2MB(pgs));
 			counter &= (1 << 24) - 1;
 		}
 
@@ -336,7 +337,7 @@ dumpsys_generic(struct dumperinfo *di)
 	if (error != 0)
 		goto fail;
 
-	printf("Dumping %ju MB (%d chunks)\n", (uintmax_t)dumpsize >> 20,
+	printf("Dumping %" PRIu64 " MB (%d chunks)\n", dumpsize >> 20,
 	    ehdr.e_phnum - DUMPSYS_NUM_AUX_HDRS);
 
 	/* Dump ELF header */
