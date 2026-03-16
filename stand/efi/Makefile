@@ -13,5 +13,6 @@ SUBDIR.${MK_FORTH}+= loader_4th
 SUBDIR.${MK_LOADER_LUA}+= loader_lua
 SUBDIR.${MK_LOADER_IA32}+= loader_ia32
 SUBDIR.yes+=	loader_simp
+SUBDIR.yes+=	hiber
 
 .include <bsd.subdir.mk>
