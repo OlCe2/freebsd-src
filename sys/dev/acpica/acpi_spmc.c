@@ -331,8 +331,8 @@ supports_function(const struct acpi_spmc_softc *const sc, const int dsm_index,
 	    IDX_TO_BIT(function_index)) != 0);
 }
 
-static void	acpi_spmc_probe_dsm(struct acpi_spmc_softc *sc,
-		    ACPI_HANDLE handle, const struct dsm_desc *const dsm);
+static void	acpi_spmc_probe_dsm(struct acpi_spmc_softc *const sc,
+		    const struct dsm_desc *const dsm);
 static void	acpi_spmc_dsm_print_functions(
 		    const struct acpi_spmc_softc *const sc,
 		    const struct dsm_desc *const dsm);
@@ -378,7 +378,7 @@ acpi_spmc_attach(device_t dev)
 	for (int i = 0; i < nitems(dsms); ++i) {
 		KASSERT(dsms[i] != NULL, ("%s: Sparse dsms[]!", __func__));
 
-		acpi_spmc_probe_dsm(sc, handle, dsms[i]);
+		acpi_spmc_probe_dsm(sc, dsms[i]);
 	}
 
 	if (sc->dsms == 0) {
@@ -461,10 +461,10 @@ acpi_spmc_dsm_print_functions(const struct acpi_spmc_softc *const sc,
 }
 
 static void
-acpi_spmc_probe_dsm(struct acpi_spmc_softc *sc, ACPI_HANDLE handle,
+acpi_spmc_probe_dsm(struct acpi_spmc_softc *const sc,
     const struct dsm_desc *const dsm)
 {
-	const uint64_t supported_functions = acpi_DSMQuery(handle,
+	const uint64_t supported_functions = acpi_DSMQuery(sc->handle,
 	    (const uint8_t *)&dsm->uuid, dsm->revision);
 
 	/*
