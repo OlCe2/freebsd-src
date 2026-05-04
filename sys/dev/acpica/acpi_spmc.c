@@ -222,7 +222,9 @@ struct acpi_spmc_softc {
 	struct eventhandler_entry	*eh_suspend;
 	struct eventhandler_entry	*eh_resume;
 
-	bool				constraints_populated;
+#ifdef INVARIANTS
+	bool				get_constraints_succeeded;
+#endif
 	size_t				constraint_count;
 	struct acpi_spmc_constraint	*constraints;
 };
@@ -489,8 +491,6 @@ acpi_spmc_parse_constraints_intel(struct acpi_spmc_softc *sc, ACPI_OBJECT *objec
 	ACPI_OBJECT	*detail;
 	ACPI_OBJECT	*constraint_package;
 
-	KASSERT(!sc->constraints_populated, ("Constraints already populated"));
-
 	sc->constraint_count = object->Package.Count;
 	sc->constraints = malloc(sc->constraint_count * sizeof *sc->constraints,
 	    M_TEMP, M_WAITOK | M_ZERO);
@@ -537,7 +537,6 @@ acpi_spmc_parse_constraints_intel(struct acpi_spmc_softc *sc, ACPI_OBJECT *objec
 		    constraint_package->Package.Elements[2].Integer.Value;
 	}
 
-	sc->constraints_populated = true;
 	return (0);
 }
 
@@ -549,8 +548,6 @@ acpi_spmc_parse_constraints_amd(struct acpi_spmc_softc *sc, ACPI_OBJECT *object)
 	ACPI_OBJECT	*constraints;
 	struct acpi_spmc_constraint *constraint;
 	ACPI_OBJECT	*name_obj;
-
-	KASSERT(!sc->constraints_populated, ("Constraints already populated"));
 
 	/*
 	 * First element in the package is unknown.
@@ -597,7 +594,6 @@ acpi_spmc_parse_constraints_amd(struct acpi_spmc_softc *sc, ACPI_OBJECT *object)
 		    constraint_obj->Package.Elements[3].Integer.Value;
 	}
 
-	sc->constraints_populated = true;
 	return (0);
 }
 
@@ -614,8 +610,8 @@ acpi_spmc_get_constraints(device_t dev)
 	struct acpi_spmc_constraint *constraint;
 
 	sc = device_get_softc(dev);
-	if (sc->constraints_populated)
-		return (0);
+
+	MPASS(!sc->get_constraints_succeeded);
 
 	/* The Microsoft DSM doesn't have this function. */
 	is_amd = has_dsm(sc, DSM_AMD);
@@ -652,6 +648,10 @@ acpi_spmc_get_constraints(device_t dev)
 			constraint->handle = NULL;
 		}
 	}
+
+#ifdef INVARIANTS
+	sc->get_constraints_succeeded = true;
+#endif
 	return (0);
 }
 
@@ -662,7 +662,6 @@ acpi_spmc_check_constraints(struct acpi_spmc_softc *sc)
 	bool violation = false;
 #endif
 
-	KASSERT(sc->constraints_populated, ("Constraints not populated"));
 	for (size_t i = 0; i < sc->constraint_count; i++) {
 		struct acpi_spmc_constraint *constraint = &sc->constraints[i];
 
