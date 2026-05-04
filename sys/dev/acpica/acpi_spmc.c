@@ -654,7 +654,9 @@ acpi_spmc_get_constraints(device_t dev)
 static void
 acpi_spmc_check_constraints(struct acpi_spmc_softc *sc)
 {
+#ifdef notyet
 	bool violation = false;
+#endif
 
 	KASSERT(sc->constraints_populated, ("Constraints not populated"));
 	for (size_t i = 0; i < sc->constraint_count; i++) {
@@ -670,19 +672,24 @@ acpi_spmc_check_constraints(struct acpi_spmc_softc *sc)
 		if (ACPI_FAILURE(acpi_pwr_get_state(constraint->handle, &d_state)))
 			continue;
 		if (d_state < constraint->min_d_state) {
-			device_printf(sc->dev, "constraint for device %s"
-			    " violated (minimum D-state required was %s, actual"
-			    " D-state is %s), might fail to enter LPI state\n",
+			device_printf(sc->dev, "Constraint for device %s"
+			    " violated (current D-state: %s, "
+			    "required minimum D-state: %s).\n"
 			    constraint->name,
-			    acpi_d_state_to_str(constraint->min_d_state),
-			    acpi_d_state_to_str(d_state));
+			    acpi_d_state_to_str(d_state),
+			    acpi_d_state_to_str(constraint->min_d_state));
 			violation = true;
 		}
 #endif
 	}
-	if (!violation)
+#ifdef notyet
+	if (violation)
+		device_printf(sc->dev, "Some constraints violated, "
+		    "might fail to enter a Low-Power Idle state\n");
+	else
 		device_printf(sc->dev,
-		    "all device power constraints respected!\n");
+		    "All device power constraints respected!\n");
+#endif
 }
 
 static void
