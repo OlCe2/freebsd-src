@@ -449,7 +449,7 @@ acpi_spmc_dsm_print_functions(const struct acpi_spmc_softc *const sc,
 	device_printf(sc->dev, "DSM %s: Supported functions: %#" PRIx64 "%s\n",
 	    dsm->name, supported_functions, buf);
 
-	if (missing != 0) {
+	if (VERBOSE() && missing != 0) {
 		print_bit_field(buf, nitems(buf), missing, "FUNC",
 		    pbf_function_name, dsm);
 		device_printf(sc->dev, "DSM %s: Does not enumerate expected "
@@ -457,7 +457,7 @@ acpi_spmc_dsm_print_functions(const struct acpi_spmc_softc *const sc,
 		    dsm->name, missing, buf);
 	}
 
-	if (unknown != 0) {
+	if (VERBOSE() && unknown != 0) {
 		print_bit_field(buf, nitems(buf), unknown, "FUNC",
 		    pbf_function_name, dsm);
 		device_printf(sc->dev, "DSM %s: Supports more functions than "
@@ -529,8 +529,11 @@ acpi_spmc_parse_constraints_intel(struct acpi_spmc_softc *sc, ACPI_OBJECT *objec
 		 */
 		revision = detail->Package.Elements[0].Integer.Value;
 		if (revision != 0) {
-			device_printf(sc->dev, "Intel: Unknown revision %d for "
-			    "constraint %zu's detail package\n", revision, i);
+			if (VERBOSE())
+				device_printf(sc->dev,
+				    "Intel: Unknown revision %d for "
+				    "constraint %zu's detail package\n",
+				    revision, i);
 			sc->constraint_count--;
 			continue;
 		}
@@ -566,9 +569,10 @@ acpi_spmc_parse_constraints_amd(struct acpi_spmc_softc *sc, ACPI_OBJECT *object)
 	constraints = &object->Package.Elements[2];
 
 	if (constraints->Package.Count != constraint_count) {
-		device_printf(sc->dev,
-		    "AMD: Constraints: Count mismatch (%d to %zu)\n",
-		    constraints->Package.Count, constraint_count);
+		if (VERBOSE())
+			device_printf(sc->dev,
+			    "AMD: Constraints: Count mismatch (%d to %zu)\n",
+			    constraints->Package.Count, constraint_count);
 		return (ENXIO);
 	}
 
@@ -580,9 +584,11 @@ acpi_spmc_parse_constraints_amd(struct acpi_spmc_softc *sc, ACPI_OBJECT *object)
 		/* Parse the constraint package. */
 		constraint_obj = &constraints->Package.Elements[i];
 		if (constraint_obj->Package.Count != 4) {
-			device_printf(sc->dev,
-			    "AMD: Constraint %zu has %d elements, not 4\n",
-			    i, constraint_obj->Package.Count);
+			if (VERBOSE())
+				device_printf(sc->dev,
+				    "AMD: Constraint %zu has %d elements, "
+				    "not 4\n",
+				    i, constraint_obj->Package.Count);
 			acpi_spmc_free_constraints(sc);
 			return (ENXIO);
 		}
@@ -662,9 +668,11 @@ acpi_spmc_get_constraints(struct acpi_spmc_softc *const sc)
 		status = acpi_GetHandleInScope(sc->handle,
 		    __DECONST(char *, constraint->name), &constraint->handle);
 		if (ACPI_FAILURE(status)) {
-			device_printf(sc->dev,
-			    "Constraints: Cannot get handle for %s, ignoring\n",
-			    constraint->name);
+			if (VERBOSE())
+				device_printf(sc->dev,
+				    "Constraints: Cannot get handle for %s, "
+				    "ignoring\n",
+				    constraint->name);
 			constraint->handle = NULL;
 		}
 	}
