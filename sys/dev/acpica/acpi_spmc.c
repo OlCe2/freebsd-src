@@ -205,6 +205,11 @@ SYSCTL_INT(_debug_acpi_spmc, OID_AUTO, verbose, CTLFLAG_RW,
 
 #define VERBOSE()	(verbose || bootverbose)
 
+/* Per DSM probed information. */
+struct dsm_info {
+	uint64_t	supported_functions;
+};
+
 struct acpi_spmc_constraint {
 	bool		enabled;
 	char		*name;
@@ -222,7 +227,7 @@ struct acpi_spmc_constraint {
 struct acpi_spmc_softc {
 	device_t		dev;
 	ACPI_HANDLE		handle;
-	uint64_t		supported_functions[nitems(dsms)];
+	struct dsm_info		dsms_info[nitems(dsms)];
 
 	struct eventhandler_entry	*eh_suspend;
 	struct eventhandler_entry	*eh_resume;
@@ -246,9 +251,9 @@ static bool
 supports_function(const struct acpi_spmc_softc *const sc,
     const int dsm_index, const int function_index)
 {
-	MPASS(0 <= dsm_index && dsm_index < nitems(sc->supported_functions));
+	MPASS(0 <= dsm_index && dsm_index < nitems(dsms));
 
-	return ((sc->supported_functions[dsm_index] &
+	return ((sc->dsms_info[dsm_index].supported_functions &
 	    IDX_TO_BIT(function_index)) != 0);
 }
 
@@ -446,7 +451,7 @@ acpi_spmc_dsm_print_functions(const struct acpi_spmc_softc *const sc,
 	 * report as unknown.
 	 */
 	const uint64_t supported_functions = ~IDX_TO_BIT(DSM_ENUM_FUNCTIONS) &
-	    sc->supported_functions[dsm->index];
+	    sc->dsms_info[dsm->index].supported_functions;
 	const uint64_t missing = dsm->expected_functions & ~supported_functions;
 	const uint64_t unknown = supported_functions &
 	    ~(dsm->expected_functions | dsm->extra_functions);
@@ -486,7 +491,7 @@ acpi_spmc_probe_dsm(struct acpi_spmc_softc *const sc,
 	 */
 	if ((supported_functions & IDX_TO_BIT(DSM_ENUM_FUNCTIONS)) == 0)
 		return;
-	sc->supported_functions[dsm->index] = supported_functions;
+	sc->dsms_info[dsm->index].supported_functions = supported_functions;
 }
 
 static void
