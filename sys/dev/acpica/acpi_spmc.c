@@ -222,7 +222,6 @@ struct acpi_spmc_constraint {
 struct acpi_spmc_softc {
 	device_t		dev;
 	ACPI_HANDLE		handle;
-	int			dsms;
 	uint64_t		supported_functions[nitems(dsms)];
 
 	struct eventhandler_entry	*eh_suspend;
@@ -241,6 +240,22 @@ resolve_dsm(int dsm_index)
 {
 	MPASS(0 <= dsm_index && dsm_index < nitems(dsms));
 	return (dsms[dsm_index]);
+}
+
+static bool
+supports_function(const struct acpi_spmc_softc *const sc,
+    const int dsm_index, const int function_index)
+{
+	MPASS(0 <= dsm_index && dsm_index < nitems(sc->supported_functions));
+
+	return ((sc->supported_functions[dsm_index] &
+	    IDX_TO_BIT(function_index)) != 0);
+}
+
+static bool
+has_dsm(const struct acpi_spmc_softc *const sc, const int dsm_index)
+{
+	return (supports_function(sc, dsm_index, DSM_ENUM_FUNCTIONS));
 }
 
 typedef const char *pbf_get_name_t(const int, const void *const);
@@ -312,12 +327,6 @@ print_bit_field(char *const buf, const size_t buf_size,
 	return (ret);
 }
 
-static bool
-has_dsm(const struct acpi_spmc_softc *const sc, const int dsm_index)
-{
-	return ((sc->dsms & IDX_TO_BIT(dsm_index)) != 0);
-}
-
 static void
 failed_to_call_dsm(const struct acpi_spmc_softc *const sc,
     const struct dsm_desc *const dsm, const int function_index)
@@ -325,16 +334,6 @@ failed_to_call_dsm(const struct acpi_spmc_softc *const sc,
 	(void)device_printf(sc->dev,
 	    "Failed to call DSM %s (rev %u) function %s\n",
 	    dsm->name, dsm->revision, dsm_function_name(dsm, function_index));
-}
-
-static bool
-supports_function(const struct acpi_spmc_softc *const sc, const int dsm_index,
-    const int function_index)
-{
-	MPASS(0 <= dsm_index && dsm_index < nitems(sc->supported_functions));
-
-	return ((sc->supported_functions[dsm_index] &
-	    IDX_TO_BIT(function_index)) != 0);
 }
 
 static void	acpi_spmc_probe_dsm(struct acpi_spmc_softc *const sc,
@@ -370,6 +369,7 @@ acpi_spmc_attach(device_t dev)
 {
 	struct acpi_spmc_softc *const sc = device_get_softc(dev);
 	const ACPI_HANDLE handle = acpi_get_handle(dev);
+	int supported_dsms;
 	char buf[32];
 	int error;
 
@@ -381,26 +381,29 @@ acpi_spmc_attach(device_t dev)
 	sc->dev = dev;
 	sc->handle = handle;
 
+	supported_dsms = 0;
 	for (int i = 0; i < nitems(dsms); ++i) {
 		KASSERT(dsms[i] != NULL, ("%s: Sparse dsms[]!", __func__));
-
-		acpi_spmc_probe_dsm(sc, dsms[i]);
-	}
-
-	if (sc->dsms == 0) {
-		device_printf(dev, "No DSM supported!");
-		return (ENXIO);
-	}
-
-	print_bit_field(buf, nitems(buf), sc->dsms, "DSM", pbf_dsm_name, NULL);
-	device_printf(dev, "DSMs supported: %s\n", buf);
-
-	/* Print supported functions of usable DSMs. */
-	for (int i = 0; i < nitems(dsms); ++i) {
 		KASSERT(dsms[i]->index == i,
 		    ("%s: Inconsistent indices for DSM %s", __func__,
 		    dsms[i]->name));
 
+		acpi_spmc_probe_dsm(sc, dsms[i]);
+		if (has_dsm(sc, i))
+			supported_dsms |= IDX_TO_BIT(i);
+	}
+
+	if (supported_dsms == 0) {
+		device_printf(dev, "No DSM supported!");
+		return (ENXIO);
+	}
+
+	print_bit_field(buf, nitems(buf), supported_dsms, "DSM",
+	    pbf_dsm_name, NULL);
+	device_printf(dev, "DSMs supported: %s\n", buf);
+
+	/* Print supported functions of usable DSMs. */
+	for (int i = 0; i < nitems(dsms); ++i) {
 		if (has_dsm(sc, i))
 			acpi_spmc_dsm_print_functions(sc, dsms[i]);
 	}
@@ -437,7 +440,12 @@ static void
 acpi_spmc_dsm_print_functions(const struct acpi_spmc_softc *const sc,
     const struct dsm_desc *const dsm)
 {
-	const uint64_t supported_functions =
+	/*
+	 * Remove the enumeration function bit, which we do not care about when
+	 * printing which functions are supported and which we do not want to
+	 * report as unknown.
+	 */
+	const uint64_t supported_functions = ~IDX_TO_BIT(DSM_ENUM_FUNCTIONS) &
 	    sc->supported_functions[dsm->index];
 	const uint64_t missing = dsm->expected_functions & ~supported_functions;
 	const uint64_t unknown = supported_functions &
@@ -476,10 +484,9 @@ acpi_spmc_probe_dsm(struct acpi_spmc_softc *const sc,
 	/*
 	 * DSM is supported if bit 0 is set.
 	 */
-	if ((supported_functions & 1) == 0)
+	if ((supported_functions & IDX_TO_BIT(DSM_ENUM_FUNCTIONS)) == 0)
 		return;
-	sc->supported_functions[dsm->index] = supported_functions & ~1;
-	sc->dsms |= IDX_TO_BIT(dsm->index);
+	sc->supported_functions[dsm->index] = supported_functions;
 }
 
 static void
