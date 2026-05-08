@@ -203,6 +203,8 @@ typedef struct {
 #define	ET_LOPROC	0xff00	/* First processor-specific. */
 #define	ET_HIPROC	0xffff	/* Last processor-specific. */
 
+#define	ET_FREEBSD_S4_IMAGE		(ET_LOOS + 1)
+
 /* Values for e_machine. */
 #define	EM_NONE		0	/* Unknown machine. */
 #define	EM_M32		1	/* AT&T WE32100. */
