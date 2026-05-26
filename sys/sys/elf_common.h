@@ -199,6 +199,8 @@ typedef struct {
 #define	ET_DYN		3	/* Shared object. */
 #define	ET_CORE		4	/* Core file. */
 #define	ET_LOOS		0xfe00	/* First operating system specific. */
+#define	ET_FREEBSD_HIBERNATE_IMAGE	(ET_LOOS + 1)
+				/* Hibernate (suspend-to-disk) image. */
 #define	ET_HIOS		0xfeff	/* Last operating system-specific. */
 #define	ET_LOPROC	0xff00	/* First processor-specific. */
 #define	ET_HIPROC	0xffff	/* Last processor-specific. */
