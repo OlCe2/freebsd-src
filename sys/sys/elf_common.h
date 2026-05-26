@@ -199,6 +199,7 @@ typedef struct {
 #define	ET_DYN		3	/* Shared object. */
 #define	ET_CORE		4	/* Core file. */
 #define	ET_LOOS		0xfe00	/* First operating system specific. */
+#define	ET_FREEBSD_HIBERNATE_IMAGE	(ET_LOOS + 1)
 #define	ET_HIOS		0xfeff	/* Last operating system-specific. */
 #define	ET_LOPROC	0xff00	/* First processor-specific. */
 #define	ET_HIPROC	0xffff	/* Last processor-specific. */
@@ -556,6 +557,10 @@ typedef struct {
 #define	PT_PHDR		6	/* Location of program header itself. */
 #define	PT_TLS		7	/* Thread local storage segment */
 #define	PT_LOOS		0x60000000	/* First OS-specific. */
+/* Hibernate control block. */
+#define	PT_FREEBSD_HIBERNATE_CB		0x61000054
+/* Hibernate minimal PCB to hand over control to the kernel. */
+#define	PT_FREEBSD_HIBERNATE_PCB	0x61000055
 #define	PT_SUNW_UNWIND	0x6464e550	/* amd64 UNWIND program header */
 #define	PT_GNU_EH_FRAME	0x6474e550
 #define	PT_GNU_STACK	0x6474e551
