@@ -82,7 +82,7 @@ enum power_stype {
 	POWER_STYPE_FW_HIBERNATE,
 	POWER_STYPE_POWEROFF,
 	POWER_STYPE_COUNT,
-	POWER_STYPE_UNKNOWN,
+	POWER_STYPE_UNKNOWN = POWER_STYPE_COUNT,
 };
 
 /* XXX NUL terminator is included in this number */
