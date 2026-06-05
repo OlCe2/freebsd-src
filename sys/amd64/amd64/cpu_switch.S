@@ -226,7 +226,6 @@ done_load_dr:
 	 * So, to make it work on both forms of cpu we do the detour.
 	 * We use jumps rather than call in order to avoid the stack.
 	 */
-
 store_dr:
 	movq	%dr7,%rax			/* yes, do the save */
 	movq	%dr0,%r15
@@ -291,6 +290,15 @@ do_ldt:	movq	PCPU(LDT),%rax
 ctx_switch_xsave32:
 	xsave	(%r9)
 	jmp	ctx_switch_xsave_done
+
+	/* Wait for the new thread to become unblocked */
+sw1wait:
+1:
+	pause
+	movq	TD_LOCK(%r12),%rcx
+	cmpq	%rcx, %rdx
+	je	1b
+	jmp	sw1cont
 END(cpu_switch)
 
 /*
@@ -488,13 +496,5 @@ ENTRY(resumectx)
 	ret
 END(resumectx)
 
-/* Wait for the new thread to become unblocked */
-sw1wait:
-1:
-	pause
-	movq	TD_LOCK(%r12),%rcx
-	cmpq	%rcx, %rdx
-	je	1b
-	jmp	sw1cont
 
 	.section .note.GNU-stack,"",%progbits
