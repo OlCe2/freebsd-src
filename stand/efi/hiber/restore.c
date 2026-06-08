@@ -18,7 +18,7 @@ check_elf_headers(const Elf_Ehdr *ehdr)
 		hiber_printf("unsupported file version\n");
 		return (false);
 	}
-	if (ehdr->e_type != ET_FREEBSD_S4_IMAGE) {
+	if (ehdr->e_type != ET_FREEBSD_HIBERNATE_IMAGE) {
 		hiber_printf("unsupported file type\n");
 		return (false);
 	}
@@ -40,7 +40,7 @@ hiber_check_format(void)
 {
 	Elf_Ehdr ehdr;
 	Elf_Phdr *phdrs, *ph;
-	vm_paddr_t pcb_physaddr, tramp_physaddr;
+	vm_paddr_t pcb_physaddr, cb_physaddr;
 	EFI_STATUS status;
 	bool res;
 
@@ -65,42 +65,41 @@ hiber_check_format(void)
 		goto out;
 
 	pcb_physaddr = 0;
-	tramp_physaddr = 0;
+	cb_physaddr = 0;
 	res = true;
 
 	for (ph = phdrs; ph < phdrs + ehdr.e_phnum; ph++) {
 		switch (ph->p_type) {
-		case PT_FREEBSD_S4_PCB:
+		case PT_FREEBSD_HIBERNATE_PCB:
 			pcb_physaddr = ph->p_paddr;
-			if (ph->p_filesz != sizeof(struct s4_pcb)) {
+			if (ph->p_filesz != sizeof(struct hibernate_pcb)) {
 				hiber_printf(
-				    "PT_FREEBSD_S4_PCB file size %#x not %#x\n",
-				    ph->p_filesz, sizeof(struct s4_pcb));
+				    "PT_FREEBSD_HIBERNATE_PCB file size "
+				    "%#x not %#x\n",
+				    ph->p_filesz, sizeof(struct hibernate_pcb));
 				res = false;
 				break;
 			}
-			if (ph->p_memsz != sizeof(struct s4_pcb)) {
+			if (ph->p_memsz != sizeof(struct hibernate_pcb)) {
 				hiber_printf(
-				    "PT_FREEBSD_S4_PCB mem size %#x not %#x\n",
-				    ph->p_memsz, sizeof(struct s4_pcb));
+				    "PT_FREEBSD_HIBERNATE_PCB mem size "
+				    "%#x not %#x\n",
+				    ph->p_memsz, sizeof(struct hibernate_pcb));
 				res = false;
 				break;
 			}
 			break;
-		case PT_FREEBSD_S4_TRAMPOLINE:
-			tramp_physaddr = ph->p_paddr;
-			if (ph->p_filesz !=
-			    sizeof(struct trampoline_buf_desc)) {
-				hiber_printf("PT_FREEBSD_S4_TRAMPOLINE "
-				    "file size %#x not %#x\n", ph->p_filesz,
-				    sizeof(struct trampoline_buf_desc));
+		case PT_FREEBSD_HIBERNATE_CB:
+			cb_physaddr = ph->p_paddr;
+			if (ph->p_filesz < hcb_size_spec(0)) {
+				hiber_printf("PT_FREEBSD_HIBERNATE_CB "
+				    "file size %#x too small\n", ph->p_filesz);
 				res = false;
 				break;
 			}
-			if (ph->p_memsz != sizeof(struct trampoline_buf_desc)) {
-				hiber_printf("PT_FREEBSD_S4_TRAMPOLINE "
-				    "file size %#x not %#x\n", ph->p_memsz,
-				    sizeof(struct trampoline_buf_desc));
+			if (ph->p_memsz < hcb_size_spec(0)) {
+				hiber_printf("PT_FREEBSD_HIBERNATE_CB "
+				    "mem size %#x too small\n", ph->p_memsz);
 				res = false;
 				break;
 			}
@@ -112,12 +111,12 @@ hiber_check_format(void)
 		}
 	}
 	if (pcb_physaddr == 0) {
-		hiber_printf("PT_FREEBSD_S4_PCB was not found\n");
+		hiber_printf("PT_FREEBSD_HIBERNATE_PCB was not found\n");
 		res = false;
 		goto out;
 	}
-	if (tramp_physaddr == 0) {
-		hiber_printf("PT_FREEBSD_S4_TRAMPOLINE was not found\n");
+	if (cb_physaddr == 0) {
+		hiber_printf("PT_FREEBSD_HIBERNATE_CB was not found\n");
 		res = false;
 		goto out;
 	}
