@@ -210,9 +210,8 @@ EVENTHANDLER_DECLARE(livedumper_finish, livedump_finish_fn);
 
 /* Sizes in bytes. */
 #define HIBERNATE_CONTIG_SPARE_SIZE	(1 * 1024 * 1024)
-#define HIBERNATE_SPARE_SIZE		(128 * 1024 * 1024)
-#define HIBERNATE_PADDR_MIN		(2 *				\
-    (HIBERNATE_CONTIG_SPARE_SIZE + HIBERNATE_SPARE_SIZE))
+#define HIBERNATE_DEFAULT_SPARE_SIZE	(256 * 1024 * 1024)
+#define HIBERNATE_PADDR_MIN		(258 * 1024 * 1024)
 
 struct hibernate_cb;
 struct hibernate_pcb;

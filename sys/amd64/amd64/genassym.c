@@ -64,6 +64,7 @@
 #include <machine/segments.h>
 #include <machine/efi.h>
 #include <machine/kexec.h>
+#include <machine/hibernate.h>
 
 ASSYM(P_VMSPACE, offsetof(struct proc, p_vmspace));
 ASSYM(VM_PMAP, offsetof(struct vmspace, vm_pmap));
@@ -304,3 +305,12 @@ ASSYM(KEXEC_STAGED_SEGMENT_SIZE, sizeof(struct kexec_segment_stage));
 ASSYM(KEXEC_SEGMENT_SIZE, offsetof(struct kexec_segment_stage, size));
 ASSYM(KEXEC_SEGMENT_MAP, offsetof(struct kexec_segment_stage, map_buf));
 ASSYM(KEXEC_SEGMENT_TARGET, offsetof(struct kexec_segment_stage, target));
+
+/* Hibernate */
+ASSYM(HPCB_CR0, offsetof(struct hibernate_pcb, cr0));
+ASSYM(HPCB_CR3, offsetof(struct hibernate_pcb, cr3));
+ASSYM(HPCB_CR4, offsetof(struct hibernate_pcb, cr4));
+ASSYM(HPCB_RSP, offsetof(struct hibernate_pcb, rsp));
+ASSYM(HPCB_RIP, offsetof(struct hibernate_pcb, rip));
+ASSYM(HPCB_R12, offsetof(struct hibernate_pcb, r12));
+ASSYM(EJUSTRETURN, EJUSTRETURN);

@@ -223,6 +223,7 @@ const char *panicstr __read_mostly;
 bool scheduler_stopped __read_frequently;
 
 int dumping __read_mostly;		/* system is dumping */
+bool hibernate_writing __read_frequently;	/* writing hibernate image */
 int rebooting __read_mostly;		/* system is rebooting */
 bool dumped_core __read_mostly;		/* system successfully dumped core */
 /*

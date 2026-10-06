@@ -364,6 +364,7 @@ struct dumperinfo {
 };
 
 extern int dumping;		/* system is dumping */
+extern bool hibernate_writing;	/* writing hibernate image */
 extern bool dumped_core;	/* system successfully dumped kernel core */
 
 /*

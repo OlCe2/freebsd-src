@@ -119,6 +119,7 @@ int	callout_schedule_on(struct callout *, int, int);
 #define	callout_stop(c)		_callout_stop_safe(c, 0)
 int	_callout_stop_safe(struct callout *, int);
 void	callout_process(sbintime_t now);
+void	callout_hibernate_report(void);
 void callout_when(sbintime_t sbt, sbintime_t precision, int flags,
     sbintime_t *sbt_res, sbintime_t *prec_res);
 #endif

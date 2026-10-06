@@ -43,6 +43,7 @@
 #include <sys/systm.h>
 #include <sys/bus.h>
 #include <sys/callout.h>
+#include <sys/conf.h>
 #include <sys/domainset.h>
 #include <sys/file.h>
 #include <sys/interrupt.h>
@@ -212,6 +213,31 @@ static void	softclock_call_cc(struct callout *c, struct callout_cpu *cc,
 		    int direct);
 
 static MALLOC_DEFINE(M_CALLOUT, "callout", "Callout datastructures");
+
+static u_int callout_hibernate_blocked;
+static void *callout_hibernate_first, *callout_hibernate_last;
+
+static void
+callout_hibernate_block(void *pc)
+{
+
+	if (callout_hibernate_blocked++ == 0)
+		callout_hibernate_first = pc;
+	callout_hibernate_last = pc;
+}
+
+void
+callout_hibernate_report(void)
+{
+
+	if (callout_hibernate_blocked == 0)
+		return;
+	printf("hibernate: callout freeze blocked %u (first %p last %p)\n",
+	    callout_hibernate_blocked, callout_hibernate_first,
+	    callout_hibernate_last);
+	callout_hibernate_blocked = 0;
+	callout_hibernate_first = callout_hibernate_last = NULL;
+}
 
 /**
  * Locked by cc_lock:
@@ -943,6 +969,16 @@ callout_reset_sbt_on(struct callout *c, sbintime_t sbt, sbintime_t prec,
 	struct callout_cpu *cc;
 	int cancelled, direct;
 
+	/*
+	 * Dump I/O for the hibernate image is polled with interrupts off, so
+	 * a timeout armed while writing it can never fire.  Leave the wheel
+	 * untouched so that the captured wheel stays consistent.
+	 */
+	if (__predict_false(hibernate_writing)) {
+		callout_hibernate_block(__builtin_return_address(0));
+		return (0);
+	}
+
 	cancelled = 0;
 	callout_when(sbt, prec, flags, &to_sbt, &precision);
 
@@ -1091,6 +1127,12 @@ _callout_stop_safe(struct callout *c, int flags)
 	struct lock_class *class;
 	int direct, sq_locked, use_lock;
 	int cancelled, not_on_a_list;
+
+	/* See callout_reset_sbt_on(). */
+	if (__predict_false(hibernate_writing)) {
+		callout_hibernate_block(__builtin_return_address(0));
+		return (0);
+	}
 
 	if ((flags & CS_DRAIN) != 0)
 		WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, c->c_lock,

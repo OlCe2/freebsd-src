@@ -164,19 +164,42 @@ acpi_wakeup_cpus_bios(struct acpi_softc *sc)
 }
 
 static void
-acpi_wakeup_cpus_efi(struct acpi_softc *sc)
+acpi_wakeup_cpus_map(struct acpi_softc *sc, cpuset_t map)
 {
 	int		cpu;
 
 	/* Wake up each AP. */
 	for (cpu = 1; cpu < mp_ncpus; cpu++) {
-		if (!CPU_ISSET(cpu, &suspcpus))
+		if (!CPU_ISSET(cpu, &map))
 			continue;
 		if (acpi_wakeup_ap(sc, cpu) == 0) {
 			panic("acpi_wakeup: failed to resume AP #%d (PHY #%d)",
 			    cpu, cpu_apic_ids[cpu]);
 		}
 	}
+}
+
+/*
+ * S4-only AP re-entry entry point.  S3 patches wakeup_efer in
+ * acpi_sleep_machdep() before sleep; the hibernate path skips that
+ * routine, so patch EFER once here before INIT-SIPI.  Clear EFER_LMA:
+ * wakecode enters via real→protected→long mode and must not see LMA
+ * already set.  Do not patch in acpi_wakeup_ap() or
+ * acpi_install_wakeup_handler() — those would alter the shared S3 path.
+ */
+void
+acpi_wakeup_cpus(struct acpi_softc *sc, cpuset_t map)
+{
+
+	WAKECODE_FIXUP(wakeup_efer, uint64_t, rdmsr(MSR_EFER) & ~(EFER_LMA));
+	acpi_wakeup_cpus_map(sc, map);
+}
+
+static void
+acpi_wakeup_cpus_efi(struct acpi_softc *sc)
+{
+
+	acpi_wakeup_cpus_map(sc, suspcpus);
 }
 
 int

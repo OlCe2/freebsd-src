@@ -3110,10 +3110,14 @@ xpt_sim_poll(struct cam_sim *sim)
 
 	KASSERT(cam_sim_pollable(sim), ("%s: non-pollable sim", __func__));
 	mtx = sim->mtx;
-	if (mtx)
+	/*
+	 * During hibernate dump writing, freeze sleep lock mutations so
+	 * the live memory snapshot is not captured with transient locks held.
+	 */
+	if (mtx && !hibernate_writing)
 		mtx_lock(mtx);
 	(*(sim->sim_poll))(sim);
-	if (mtx)
+	if (mtx && !hibernate_writing)
 		mtx_unlock(mtx);
 	camisr_runqueue();
 }

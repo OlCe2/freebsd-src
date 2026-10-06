@@ -625,6 +625,17 @@ ns8250_bus_attach(struct uart_softc *sc)
 
 	ns8250->busy_detect = bas->busy_detect;
 	ns8250->mcr = uart_getreg(bas, REG_MCR);
+	/*
+	 * Ensure interrupt enable (OUT2) and line controls (DTR, RTS)
+	 * are asserted in hardware MCR, especially after resume from firmware
+	 * reboot where MCR was reset to 0. Without MCR_IE, the chip's interrupt
+	 * line is tri-stated and RX interrupts never reach the controller.
+	 */
+	ns8250->mcr |= MCR_IE;
+	if (sc->sc_sysdev != NULL)
+		ns8250->mcr |= MCR_DTR | MCR_RTS;
+	uart_setreg(bas, REG_MCR, ns8250->mcr);
+	uart_barrier(bas);
 	ns8250->fcr = FCR_ENABLE;
 	if (!resource_int_value("uart", device_get_unit(sc->sc_dev), "flags",
 	    &ivar)) {

@@ -3838,6 +3838,15 @@ adaresume(void *arg, enum power_stype stype)
 	struct cam_periph *periph;
 	struct ada_softc *softc;
 
+	/*
+	 * Hibernate intentionally skips power_suspend (disk dump must keep
+	 * the target online).  Matching adasuspend never ran, so there is
+	 * no CAM_DEV_QFREEZE to release — releasing here trips
+	 * xpt_release_simq "requested 1 > present 0".
+	 */
+	if (stype == POWER_STYPE_OS_HIBERNATE)
+		return;
+
 	if (ada_spindown_suspend == 0)
 		return;
 

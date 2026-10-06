@@ -26,6 +26,7 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/callout.h>
 #include <sys/conf.h>
 #include <sys/cons.h>
 #include <sys/kdb.h>
@@ -35,6 +36,7 @@
 #include <sys/msgbuf.h>
 #include <sys/proc.h>
 #include <sys/smp.h>
+#include <sys/sysctl.h>
 #include <sys/watchdog.h>
 
 #include <vm/vm.h>
@@ -302,10 +304,15 @@ cb_size(struct dump_pa *mdp, int seqnr, void *arg)
 
 #ifdef OS_HIBERNATE_SUPPORT
 
+SYSCTL_DECL(_debug_acpi);
+
+static int hibernate_spare_mb = 512;
+SYSCTL_INT(_debug_acpi, OID_AUTO, hibernate_spare_mb, CTLFLAG_RWTUN,
+    &hibernate_spare_mb, 0,
+    "Hibernate spare staging memory in megabytes (default 512)");
+
 const uint64_t contig_spare_pages_nb = howmany(HIBERNATE_CONTIG_SPARE_SIZE,
     PAGE_SIZE);
-const uint64_t spare_pages_nb = howmany(HIBERNATE_SPARE_SIZE, PAGE_SIZE);
-
 
 int
 dumpsys_hibernate_create_hcb(uint64_t hardware_signature,
@@ -325,13 +332,24 @@ dumpsys_hibernate_create_hcb(uint64_t hardware_signature,
 	const int vm_req = VM_ALLOC_NOWAIT | VM_ALLOC_ZERO | VM_ALLOC_NODUMP;
 	struct hibernate_cb *hcb;
 	vm_page_t p;
+	uint64_t spare_mb, spare_pages_nb;
 	int contig_tries = 0;
 	int error;
+
+	spare_mb = (hibernate_spare_mb > 0) ? (uint64_t)hibernate_spare_mb : 512;
+	if (spare_mb < 128)
+		spare_mb = 128;
+	if (spare_mb > 512)
+		spare_mb = 512;
+	if ((spare_mb * 1024 * 1024) > ((uint64_t)physmem * PAGE_SIZE) / 2)
+		spare_mb = (((uint64_t)physmem * PAGE_SIZE) / 2) / (1024 * 1024);
+	spare_pages_nb = howmany(spare_mb * 1024 * 1024, PAGE_SIZE);
 
 	/* Allocate the control block. */
 	hcb = malloc(hcb_size_spec(spare_pages_nb), M_TEMP, M_WAITOK | M_ZERO);
 
 	hcb->hc_version = HCB_VERSION;
+	hcb->hc_spare_pages_nb = spare_pages_nb;
 
 	/* Allocate the contiguous chunk first for better chances of success. */
 	hcb->hc_contig_spare_size = contig_spare_pages_nb * PAGE_SIZE;
@@ -359,7 +377,6 @@ dumpsys_hibernate_create_hcb(uint64_t hardware_signature,
 	hcb->hc_contig_spare_start = VM_PAGE_TO_PHYS(p);
 
 	/* Non-contiguous pages. */
-	hcb->hc_spare_pages_nb = spare_pages_nb;
 	for (uint64_t i = 0; i < spare_pages_nb; ++i) {
 		vm_page_t p;
 		int spare_tries = 0;
@@ -381,8 +398,8 @@ dumpsys_hibernate_create_hcb(uint64_t hardware_signature,
 			error = vm_page_reclaim_contig(vm_req,
 			    spare_pages_reclaim_slop, HIBERNATE_PADDR_MIN, -1,
 			    PAGE_SIZE, 0);
-				if (error != 0)
-					goto free_hcb;
+			if (error != 0)
+				goto free_hcb;
 		}
 
 		hcb->hc_spare_pages[i] = VM_PAGE_TO_PHYS(p);
@@ -412,16 +429,11 @@ dumpsys_hibernate_free_hcb(struct hibernate_cb *hcb)
 		    hcb->hc_contig_spare_size / PAGE_SIZE;
 
 		p = PHYS_TO_VM_PAGE(phys);
-		/*
-		 * XXX: Looks a bit too low-level and kind of a layer violation;
-		 * need to evolve 'vm_page.c'.
-		 */
-		vm_domain_free_lock(vm_pagequeue_domain(p));
-		vm_phys_free_contig(p, p->pool, contig_spare_pages_nb);
-		vm_domain_free_unlock(vm_pagequeue_domain(p));
+		for (uint64_t i = 0; i < contig_spare_pages_nb; ++i)
+			vm_page_free(p + i);
 	}
 
-	for (uint64_t i = 0; i < spare_pages_nb; ++i) {
+	for (uint64_t i = 0; i < hcb->hc_spare_pages_nb; ++i) {
 		phys = hcb->hc_spare_pages[i];
 
 		if (phys != 0)
@@ -700,6 +712,7 @@ dump_for_hibernate(const struct hibernate_cb *const hcb,
 	 * we need to reproduce these here.
 	 */
 	++dumping;
+	hibernate_writing = true;
 
 	/* XXX - Validity of 'dumper_configs' under SCHEDULER_STOPPED(). */
 	TAILQ_FOREACH(di, &dumper_configs, di_next) {
@@ -717,7 +730,9 @@ dump_for_hibernate(const struct hibernate_cb *const hcb,
 	}
 
 finish:
+	hibernate_writing = false;
 	--dumping;
+	callout_hibernate_report();
 
 	return (error);
 }

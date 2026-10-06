@@ -58,9 +58,15 @@
 #include <sys/uuid.h>
 
 #if defined(__i386__) || defined(__amd64__)
+#include <vm/vm.h>
+#include <vm/pmap.h>
 #include <machine/clock.h>
+#include <machine/fpu.h>
 #include <machine/intr_machdep.h>
+#include <machine/pcb.h>
 #include <machine/pci_cfgreg.h>
+#include <machine/pvclock.h>
+#include <x86/apicvar.h>
 #include <x86/cputypes.h>
 #include <x86/x86_var.h>
 #endif
@@ -3679,6 +3685,159 @@ resume_other_cpus(const cpuset_t *const susp_cpus)
 #endif
 }
 
+static char hibernate_dump_stack[HIBERNATE_SCRATCH_STACK_SIZE] __aligned(PAGE_SIZE);
+
+struct hibernate_dump_args {
+	struct acpi_softc	*sc;
+	struct hibernate_cb	*hcb;
+	struct hibernate_pcb	*hpcb;
+	int			slp_state;
+};
+
+static int
+acpi_hibernate_dump_worker(void *arg1, void *arg2)
+{
+	struct hibernate_dump_args *args = arg1;
+	int error = 0;
+
+	(void)arg2;
+	if ((args->slp_state & ACPI_SS_DEV_SUSPEND) != 0) {
+		device_printf(args->sc->acpi_dev,
+		    "Resuming the dump device (currently, all devices)\n");
+		DEVICE_RESUME(root_bus);
+	}
+
+	device_printf(args->sc->acpi_dev, "Saving the dump image...\n");
+	error = dump_for_hibernate(args->hcb, args->hpcb);
+	return (error);
+}
+
+/*
+ * S4 resume stages.  EJUSTRETURN calls the
+ * orchestrator once, then goto backout.
+ */
+static void
+acpi_s4_resume_discard_snapshot(int saved_td_locks, int saved_td_pinned,
+    struct lock_list_entry *saved_td_sleeplocks)
+{
+	/*
+	 * The hibernate image is a live snapshot of physical memory taken by
+	 * the dump worker, so nesting counters / dump flags captured mid-dump
+	 * must be discarded before sleep-lock acquisitions on the resume path.
+	 * Pre-savectx td_* values live on the preserved thread stack.
+	 */
+	curthread->td_critnest = 0;
+	curthread->td_md.md_spinlock_count = 0;
+	curthread->td_locks = saved_td_locks;
+	curthread->td_pinned = saved_td_pinned;
+	curthread->td_sleeplocks = saved_td_sleeplocks;
+	hibernate_writing = false;
+	callout_hibernate_report();
+	dumping = 0;
+#if defined(__i386__) || defined(__amd64__)
+	pvclock_resume();
+#endif
+}
+
+#ifdef __amd64__
+extern struct susppcb **susppcbs;
+#endif
+
+static void
+acpi_s4_resume_bsp_cpu(void)
+{
+
+	pmap_init_pat();
+	initializecpu();
+	/*
+	 * Restore the BSP FPU state, including XCR0.  This must happen
+	 * after initializecpu() and before the scheduler is released or
+	 * any interrupt can switch threads: the CPU reset on resume leaves
+	 * XCR0 at its x87-only reset value, so XRSTOR of a thread's saved
+	 * SSE/AVX state would fault (observed #GP on the X13).
+	 */
+	fpuresume(susppcbs[0]->sp_fpususpend);
+	PCPU_SET(switchtime, 0);
+	PCPU_SET(switchticks, ticks);
+}
+
+static void
+acpi_s4_resume_lapic(void)
+{
+
+	lapic_xapic_mode();
+}
+
+static void
+acpi_s4_resume_scheduler_aps(struct acpi_softc *sc, const cpuset_t *susp_cpus)
+{
+
+	/*
+	 * Single S4-path scheduler release, before any AP release.  Match
+	 * resume_other_cpus(): clear scheduler_stopped BEFORE releasing APs
+	 * so an AP returning into cpu_idle cannot mi_switch while
+	 * SCHEDULER_STOPPED.  Empty susp_cpus (true UP) skips AP wake.
+	 * No UP clamp — AP wake failure panics.
+	 */
+	scheduler_stopped = false;
+#ifdef SMP
+	if (!CPU_EMPTY(susp_cpus)) {
+		acpi_wakeup_cpus(sc, *susp_cpus);
+		resume_cpus(*susp_cpus);
+	}
+#else
+	(void)sc;
+	(void)susp_cpus;
+#endif
+}
+
+static void
+acpi_s4_resume_interrupts(register_t intr_state)
+{
+
+	intr_resume(false);
+	intr_restore(intr_state);
+}
+
+static void
+acpi_s4_resume_clocks(struct acpi_softc *sc)
+{
+
+	resumeclock();
+#if defined(__i386__) || defined(__amd64__)
+	resume_TSC();
+#endif
+	acpi_resync_clock(sc);
+	acpi_enable_fixed_events(sc);
+}
+
+static void
+acpi_s4_resume_bsp(struct acpi_softc *sc, enum acpi_sleep_state *slp_state,
+    const cpuset_t *susp_cpus, register_t intr_state,
+    struct hibernate_pcb *hpcb, struct hibernate_cb *hcb,
+    int saved_td_locks, int saved_td_pinned,
+    struct lock_list_entry *saved_td_sleeplocks)
+{
+
+	acpi_s4_resume_discard_snapshot(saved_td_locks, saved_td_pinned,
+	    saved_td_sleeplocks);
+	device_printf(sc->acpi_dev, "Resumed from hibernate image\n");
+	acpi_s4_resume_bsp_cpu();
+	acpi_s4_resume_lapic();
+	acpi_s4_resume_scheduler_aps(sc, susp_cpus);
+	acpi_s4_resume_interrupts(intr_state);
+	acpi_s4_resume_clocks(sc);
+	free(hpcb, M_TEMP);
+	dumpsys_hibernate_free_hcb(hcb);
+	/*
+	 * Cold-boot firmware re-initialized devices while the restored kernel
+	 * expects them configured.  Force DEVICE_RESUME via backout.
+	 */
+	*slp_state |= ACPI_SS_DEV_SUSPEND;
+	if (!acpi_supported_sstates[ACPI_STATE_S4])
+		*slp_state &= ~ACPI_SS_GPE_SET;
+}
+
 #endif
 
 /*
@@ -3772,15 +3931,17 @@ acpi_EnterSleepState(struct acpi_softc *sc, enum power_stype stype)
 #ifdef OS_HIBERNATE_SUPPORT
     } else {
 	/*
-	 * XXX - We don't currently invoke the 'power_suspend' event handler, as
-	 * disk drivers shutdown the disks which makes the dump fail.
+	 * Bare power_resume contract: do not fire power_suspend on the
+	 * hibernate dump path.  Disk drivers (ada/nda) would spindown and
+	 * freeze CAM queues, breaking the dump.  Consumers bridged here:
+	 *   - acpi_timer: acpi_timer_suspend/resume
+	 *   - vt: power_suspend_early (above) + power_resume
+	 *   - adaresume: tolerates bare resume (skips OS_HIBERNATE)
+	 *   - acpi_stop_beep / linuxkpi: resume-only or suspend_early paired
+	 * power_resume still runs via ACPI_SS_SUSP_EH for vt and peers.
 	 */
-	/*
-	 * TODO - Deactivate the swap partitions overlapping with dumping devices.
-	 * TODO - Check that we are really flushing everything that needs to here.
-	 * TODO - Get rid of the buffer and page cache (when we are able to
-	 * forego saving all physical pages).
-	 */
+	acpi_timer_suspend();
+	slp_state |= ACPI_SS_SUSP_EH;
     }
 #endif
 
@@ -3875,54 +4036,55 @@ acpi_EnterSleepState(struct acpi_softc *sc, enum power_stype stype)
 	 * other means to know we have to deallocate)?
 	 */
 
+	struct hibernate_dump_args dargs = {
+		.sc = sc,
+		.hcb = hcb,
+		.hpcb = hpcb,
+		.slp_state = slp_state,
+	};
+	void *stack_top = hibernate_dump_stack + sizeof(hibernate_dump_stack);
+	/*
+	 * Capture on the preserved thread stack before savectx: dump-path
+	 * code can take sleep locks / pin the CPU, so the counters frozen
+	 * into the thread page do not match the logical save point.
+	 */
+	int saved_td_locks = curthread->td_locks;
+	int saved_td_pinned = curthread->td_pinned;
+	struct lock_list_entry *saved_td_sleeplocks = curthread->td_sleeplocks;
+
 	/*
 	 * This is where the current CPU context is saved, and from where we
 	 * return on resume.
+	 *
+	 * On save, dumpsys_hibernate_savectx executes acpi_hibernate_dump_worker
+	 * directly on the scratch stack without unwinding, preserving the saved
+	 * return-address slot into this function completely intact in the image.
+	 *
+	 * On resume, dumpsys_hibernate_savectx returns EJUSTRETURN into this
+	 * function.
 	 */
-	error = dumpsys_hibernate_savectx(hpcb);
+	error = dumpsys_hibernate_savectx(hpcb, stack_top,
+	    (int (*)(void *, void *))acpi_hibernate_dump_worker, &dargs);
 
 	switch (error) {
 	case 0:
 	    break;
 
 	case EJUSTRETURN:
-	    resume_other_cpus(&susp_cpus);
-	    intr_restore(intr_state);
-	    /* Free memory used to hibernate. */
-	    free(hpcb, M_TEMP);
-	    dumpsys_hibernate_free_hcb(hcb);
-	    /*
-	     * We fully powered down, forget about restoring GPE state.
-	     */
-	    if (!acpi_supported_sstates[ACPI_STATE_S4])
-		slp_state &= ~ACPI_SS_GPE_SET;
-	    /*
-	     * Context has just been restored, we execute the normal
-	     * resume procedure.
-	     */
+	    acpi_s4_resume_bsp(sc, &slp_state, &susp_cpus, intr_state,
+		hpcb, hcb, saved_td_locks, saved_td_pinned,
+		saved_td_sleeplocks);
 	    status = AE_OK;
 	    goto backout;
 
 	default:
+	    if (error > 0)
+		break;
 	    __assert_unreachable();
 	}
 
-	/*
-	 * XXX - Re-activate the dump device.
-	 *
-	 * For now, we reactivate all devices, as re-activating just the dump device
-	 * requires some infrastructure work.
-	 */
-	if ((slp_state & ACPI_SS_DEV_SUSPEND) != 0) {
-	    device_printf(sc->acpi_dev,
-			  "Resuming the dump device (currently, all devices)\n");
-	    DEVICE_RESUME(root_bus);
-	    slp_state &= ~ACPI_SS_DEV_SUSPEND;
-	}
-
-	/* Save the image. */
-	device_printf(sc->acpi_dev, "Saving the dump image...\n");
-	error = dump_for_hibernate(hcb, hpcb);
+	if ((slp_state & ACPI_SS_DEV_SUSPEND) != 0)
+		slp_state &= ~ACPI_SS_DEV_SUSPEND;
 
 	resume_other_cpus(&susp_cpus);
 	intr_restore(intr_state);
@@ -4059,6 +4221,7 @@ backout:
     device_printf(sc->acpi_dev, "Resuming processes...\n");
     resume_all_proc();
 
+    acpi_timer_resume();
     if ((slp_state & ACPI_SS_SUSP_EH) != 0) {
 	EVENTHANDLER_INVOKE(power_resume, stype);
 	slp_state &= ~ACPI_SS_SUSP_EH;
