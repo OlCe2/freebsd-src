@@ -47,6 +47,15 @@ efi_exit(EFI_STATUS exit_code)
 }
 
 void
+efi_heap_get_bounds(EFI_PHYSICAL_ADDRESS *base, UINTN *size)
+{
+	if (base != NULL)
+		*base = heap;
+	if (size != NULL)
+		*size = heapsize;
+}
+
+void
 exit(int status)
 {
 

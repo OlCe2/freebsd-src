@@ -1494,6 +1494,9 @@ main(int argc, CHAR16 *argv[])
 	autoload_font(false);	/* Set up the font list for console. */
 	efi_init_environment();
 
+	/* S4 Bring-up: Read & validate hibernate image if requested */
+	hibernate_probe();
+
 	interact();			/* doesn't return */
 
 	return (EFI_SUCCESS);		/* keep compiler happy */

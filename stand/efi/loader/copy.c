@@ -201,6 +201,15 @@ efi_copy_free(void)
 	stage_offset = 0;
 }
 
+void
+efi_staging_get_bounds(EFI_PHYSICAL_ADDRESS *base, UINTN *size)
+{
+	if (base != NULL)
+		*base = staging_base;
+	if (size != NULL)
+		*size = staging_end - staging_base;
+}
+
 #if defined(__amd64__) || defined(__i386__)
 int copy_staging = COPY_STAGING_AUTO;
 

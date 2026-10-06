@@ -31,6 +31,7 @@ SRCS=	autoload.c \
 	8x16.c
 
 SRCS+= acpi_detect.c
+SRCS+= hibernate_read.c
 .PATH: ${EFISRC}/acpica
 CFLAGS+=	-I${EFISRC}/acpica/include
 
