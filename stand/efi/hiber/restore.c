@@ -299,49 +299,53 @@ digest_uefi_runtime(const struct hiber_image *img,
 			emd_start = emd->PhysicalStart;
 			emd_end = emd_start + emd->NumberOfPages * HPAGE_SIZE;
 
-			/* Exact fit. */
-			if (emd_start == hms_start && hms_end == emd_end) {
-				hms->mm_desc = emd;
-				continue;
-			}
 			/* Do not intersect. */
 			if (emd_end <= hms_start || hms_end <= emd_start)
 				continue;
-			/* EFI segment covers whole hiber segment.*/
-			if (emd_start < hms_start && hms_end < emd_end) {
+			/* EFI segment covers whole hiber segment. */
+			if (emd_start <= hms_start && hms_end <= emd_end) {
 				hms->mm_desc = emd;
 				continue;
 			}
-			/* EFI segment contains the hiber segment start. */
-			if (hms_start < emd_end && emd_end < hms_end) {
-				if (nsegs + 1 > max_segs) {
-					hiber_printf("XXX\n");
-					goto out;
-				}
-				hms_shift_right(segs, hms, nsegs);
-				hmsl = hms;
-				hms++;
+			/* EFI segment overtakes hiber segment on the left only. */
+			if (emd_start < hms_start && emd_end <= hms_end) {
+				if (emd_end != hms_end) {
+					if (nsegs + 1 > max_segs) {
+						hiber_printf("XXX\n");
+						goto out;
+					}
+					hms_shift_right(segs, hms, nsegs);
+					nsegs++;
+					hmsl = hms;
+					hms++;
+				} else
+					hmsl = hms;
 				hmsl->len = emd_end - hms_start;
 				hmsl->mm_desc = emd;
-				hms->paddr += hmsl->len;
-				hms->len -= hmsl->len;
-				MPASS(hms->len != 0);
-				nsegs++;
+				if (emd_end != hms_end) {
+					hms->paddr = emd_end;
+					hms->img_off += hmsl->len;
+					hms->len = hms_end - emd_end;
+				}
 				continue;
 			}
-			/* EFI segment contains the hiber segment end. */
-			if (hms_start < emd_start && hms_end < emd_end) {
-				if (nsegs + 1 > max_segs) {
-					hiber_printf("XXX\n");
-					goto out;
-				}
-				hms_shift_right(segs, hms, nsegs);
-				hmsr = hms + 1;
-				hms->len -= hms_end - emd_start;
-				hms->mm_desc = emd;
+			/* EFI segment overtakes hiber segment on the right only. */
+			if (hms_start <= emd_start && hms_end < emd_end) {
+				if (hms_start != emd_start) {
+					if (nsegs + 1 > max_segs) {
+						hiber_printf("XXX\n");
+						goto out;
+					}
+					hms_shift_right(segs, hms, nsegs);
+					nsegs++;
+					hmsr = hms + 1;
+					hms->len = emd_start - hms_start;
+				} else
+					hmsr = hms;
 				hmsr->paddr = emd_start;
+				hmsr->img_off += emd_start - hms_start;
 				hmsr->len = hms_end - emd_start;
-				nsegs++;
+				hmsr->mm_desc = emd;
 				continue;
 			}
 			/* EFI segment fully contained in the hiber segment. */
@@ -350,18 +354,20 @@ digest_uefi_runtime(const struct hiber_image *img,
 				goto out;
 			}
 			hms_shift_right(segs, hms, nsegs);
-			hmsl = hms;
-			hms++;
-			hms_shift_right(segs, hms, nsegs);
-			hmsr = hms + 1;
-			hmsl->len = emd_start - hms_start;
-			hms->paddr += hmsl->len;
-			hms->len -= hmsl->len;
-			MPASS(hms->len != 0);
-			hms->mm_desc = emd;
-			hmsr->paddr = hms->paddr + hms->len;
-			hmsr->len = hms_end - emd_end;
+			hms_shift_right(segs, hms + 1, nsegs);
 			nsegs += 2;
+			hmsl = hms;
+			hmsr = hms + 2;
+			hms++;
+			hmsl->len = emd_start - hms_start;
+			hms->paddr = emd_start;
+			hms->img_off += hmsl->len;
+			hms->len = emd_end - emd_start;
+			hms->mm_desc = emd;
+			hmsr->paddr = emd_end;
+			/* Alternative: hmsr->img_off += emd_end - hms_start; */
+			hmsr->img_off += hmsl->len + hms->len;
+			hmsr->len = hms_end - emd_end;
 		}
 	}
 
@@ -422,7 +428,11 @@ digest_uefi_runtime(const struct hiber_image *img,
 			goto out;
 		}
 	}
-	/* XXXKIB Merge segments? */
+	/* XXXKIB Merge segments? - OC: Probably not necessary, with the fixes
+	 * in the merge above, produced segments are now optimal and cannot be
+	 * merged except when hibernate chunks themselves are adjacent, and that
+	 * could be prevented at dump time.
+	 */
 
 	res = true;
 	*nsegsp = nsegs;
