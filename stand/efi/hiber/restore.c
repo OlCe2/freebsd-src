@@ -1,4 +1,6 @@
 #include "hiber.h"
+
+#include <machine/elf.h>
 #include <machine/hibernate.h>
 
 static bool
@@ -18,7 +20,7 @@ check_elf_headers(const Elf_Ehdr *ehdr)
 		hiber_printf("unsupported file version\n");
 		return (false);
 	}
-	if (ehdr->e_type != ET_FREEBSD_S4_IMAGE) {
+	if (ehdr->e_type != ET_FREEBSD_HIBERNATE_IMAGE) {
 		hiber_printf("unsupported file type\n");
 		return (false);
 	}
@@ -41,9 +43,7 @@ hiber_check_format(void)
 	Elf_Ehdr ehdr;
 	Elf_Phdr *phdrs;
 	const Elf_Phdr *ph;
-	vm_paddr_t pcb_physaddr, tramp_physaddr;
-	struct trampoline_buf_desc *tbd;
-	uint64_t tramp_sz;
+	vm_paddr_t hcb_pa, hpcb_pa;
 	EFI_STATUS status;
 	bool res;
 
@@ -67,46 +67,43 @@ hiber_check_format(void)
 	    ehdr.e_phnum))
 		goto out;
 
-	pcb_physaddr = 0;
-	tramp_physaddr = 0;
+	hcb_pa = hpcb_pa = -1;
 	res = true;
 
 	for (ph = phdrs; ph < phdrs + ehdr.e_phnum; ph++) {
 		switch (ph->p_type) {
-		case PT_FREEBSD_S4_PCB:
-			pcb_physaddr = ph->p_paddr;
-			if (ph->p_filesz != sizeof(struct s4_pcb)) {
+		case PT_FREEBSD_HIBERNATE_CB:
+			hcb_pa = ph->p_paddr;
+			if (!hcb_validate((void *)hcb_pa, ph->p_filesz)) {
 				hiber_printf(
-				    "PT_FREEBSD_S4_PCB file size %#x not %#x\n",
-				    ph->p_filesz, sizeof(struct s4_pcb));
+				    "Invalid PT_FREEBSD_HIBERNATE_CB "
+				    "(file size %#x)\n",
+				    ph->p_filesz);
 				res = false;
 				break;
 			}
-			if (ph->p_memsz != sizeof(struct s4_pcb)) {
+			if (ph->p_memsz != ph->p_filesz) {
 				hiber_printf(
-				    "PT_FREEBSD_S4_PCB mem size %#x not %#x\n",
-				    ph->p_memsz, sizeof(struct s4_pcb));
+				    "Invalid PT_FREEBSD_HIBERNATE_CB "
+				    "(mem size %#x not %#x)\n",
+				    ph->p_memsz, ph->p_filesz);
 				res = false;
 				break;
 			}
 			break;
-		case PT_FREEBSD_S4_TRAMPOLINE:
-			tramp_physaddr = ph->p_paddr;
-			tbd = (void *)tramp_physaddr;
-			tramp_sz = sizeof(uint64_t) +
-			    sizeof(struct trampoline_cont_buf_desc) *
-			    tbd->num_bufs;
-			if (ph->p_filesz != tramp_sz) {
-				hiber_printf("PT_FREEBSD_S4_TRAMPOLINE "
-				    "file size %#x not %#x\n", ph->p_filesz,
-				    sizeof(struct trampoline_buf_desc));
+		case PT_FREEBSD_HIBERNATE_PCB:
+			hpcb_pa = ph->p_paddr;
+			if (ph->p_filesz != sizeof(struct hibernate_pcb)) {
+				hiber_printf("Invalid PT_FREEBSD_HIBERNATE_PCB "
+				    "(file size %#x not %#x)\n", ph->p_filesz,
+				    sizeof(struct hibernate_pcb));
 				res = false;
 				break;
 			}
-			if (ph->p_memsz != tramp_sz) {
-				hiber_printf("PT_FREEBSD_S4_TRAMPOLINE "
-				    "file size %#x not %#x\n", ph->p_memsz,
-				    sizeof(struct trampoline_buf_desc));
+			if (ph->p_memsz != ph->p_filesz) {
+				hiber_printf("Invalid PT_FREEBSD_HIBERNATE_PCB "
+				    "(file size %#x not %#x\n)", ph->p_memsz,
+				    ph->p_filesz);
 				res = false;
 				break;
 			}
@@ -121,13 +118,14 @@ hiber_check_format(void)
 			break;
 		}
 	}
-	if (pcb_physaddr == 0) {
-		hiber_printf("PT_FREEBSD_S4_PCB was not found\n");
+
+	if (hcb_pa == -1) {
+		hiber_printf("PT_FREEBSD_HIBERNATE_CB was not found\n");
 		res = false;
 		goto out;
 	}
-	if (tramp_physaddr == 0) {
-		hiber_printf("PT_FREEBSD_S4_TRAMPOLINE was not found\n");
+	if (hpcb_pa == -1) {
+		hiber_printf("PT_FREEBSD_HIBERNATE_PCB was not found\n");
 		res = false;
 		goto out;
 	}
@@ -154,8 +152,8 @@ digest_image(struct hiber_image *img)
 	Elf_Ehdr ehdr;
 	Elf_Phdr *phdrs;
 	const Elf_Phdr *ph;
-	const struct trampoline_buf_desc *tbd;
-	const struct trampoline_cont_buf_desc *tcbd;
+	const struct hibernate_cb *hcb;
+	const struct hibernate_chunk_desc *hcd;
 	struct hiber_tramp_buf *htb;
 	EFI_STATUS status;
 	uint64_t ii, ii1;
@@ -182,16 +180,12 @@ digest_image(struct hiber_image *img)
 
 	for (ph = phdrs; ph < phdrs + ehdr.e_phnum; ph++) {
 		switch (ph->p_type) {
-		case PT_FREEBSD_S4_PCB:
-			memcpy(&img->pcb, (void *)ph->p_paddr,
-			    sizeof(img->pcb));
-			break;
-		case PT_FREEBSD_S4_TRAMPOLINE:
-			tbd = (void *)ph->p_paddr;
+		case PT_FREEBSD_HIBERNATE_CB:
+			hcb = (void *)ph->p_paddr;
 			img->ntramp_bufs = 0;
-			for (ii = 0; ii < tbd->num_bufs; ii++) {
-				tcbd = &tbd->bufs[ii];
-				img->ntramp_bufs += tcbd->num_pages;
+			for (ii = 0; ii < hcb->chunk_count; ii++) {
+				hcd = &hcb->chunks[ii];
+				img->ntramp_bufs += hcd->page_count;
 			}
 			status = BS->AllocatePool(EfiBootServicesData,
 			    img->ntramp_bufs * sizeof(struct hiber_tramp_buf),
@@ -202,15 +196,19 @@ digest_image(struct hiber_image *img)
 				goto out;
 			}
 			htb = &img->tramp_bufs[0];
-			for (ii = 0; ii < tbd->num_bufs; ii++) {
-				tcbd = &tbd->bufs[ii];
-				for (ii1 = 0; ii1 < tcbd->num_pages; ii1++) {
-					htb->buf_paddr = tcbd->phys_addr +
+			for (ii = 0; ii < hcb->chunk_count; ii++) {
+				hcd = &hcb->chunks[ii];
+				for (ii1 = 0; ii1 < hcd->page_count; ii1++) {
+					htb->buf_paddr = hcd->phys_addr +
 					    HPAGE_SIZE * ii1;
 					htb->tgt_paddr = 0;
 					htb++;
 				}
 			}
+			break;
+		case PT_FREEBSD_HIBERNATE_PCB:
+			memcpy(&img->pcb, (void *)ph->p_paddr,
+			    sizeof(img->pcb));
 			break;
 		case PT_LOAD:
 			img->nsegs++;

@@ -28,7 +28,7 @@ struct hiber_tramp_buf {
 struct hiber_image {
 	u_int nsegs;
 	struct hiber_image_segment *segs;
-	struct s4_pcb pcb;
+	struct hibernate_pcb pcb;
 	uint64_t ntramp_bufs;
 	struct hiber_tramp_buf *tramp_bufs;
 	uint64_t ntramp_copy_pages;
